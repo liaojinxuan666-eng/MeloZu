@@ -1,0 +1,47 @@
+name: Build MeloZu (M别的eloNX Fusion)
+
+on:
+  workflow_dispatch:   # 手动点击触发
+
+jobs:
+  compile-ipa:
+    runs-on: macos-14  # 必须的 macOS 环境
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Compile Ryujinx Core (C#)
+        run: |
+          dotnet publish src/Ryujinx.Library -c Release -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER --self-contained true
+
+      - name: Force Change Bundle Identifier (源码级别)
+        run: |
+          # 全局搜索并替换源码中原始包名为 com.melozu.stossy11
+          find . -type f \( -name "*.pbxproj" -o -name "Info.plist" -o -name "*.xcconfig" \) -exec sed -i '' 's/com.stossy11.MeloNX/com.melozu.stossy11/g' {} +
+          # 防止还有原始包名漏网，再替换一次
+          find . -type f \( -name "*.pbxproj" -o -name "Info.plist" -o -name "*.xcconfig" \) -exec sed -i '' 's/com.melodious.dst/com.melozu.stossy11/g' {} +
+
+      - name: Build iOS App with Xcode
+        run: |
+          cd src/MeloNX
+          # 双保险，覆盖 Bundle ID，并关闭签名
+          xcodebuild -project MeloNX.xcodeproj -scheme MeloNX -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          find . -name "*.app" -type d -exec cp -R {} Payload/ \;
+          zip -r MeloZu-unsigned.ipa Payload
+          ls -la
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MeloZu-2.6-unsigned-ipa
+          path: MeloZu-unsigned.ipa
