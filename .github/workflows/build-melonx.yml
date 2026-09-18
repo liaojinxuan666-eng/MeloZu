@@ -33,7 +33,6 @@ jobs:
         run: |
           cat > patch.py << 'EOF'
           import os
-          import re
 
           # 1. 修复 Toolbar 的 iOS 26 API 问题
           p = 'melonx-src/src/MeloNX/MeloNX/UI/Main/GamesList/Elements/GamesListView+ToolBar.swift'
@@ -46,15 +45,15 @@ jobs:
           p = 'melonx-src/src/MeloNX/MeloNX/Core/RyujinxController.swift'
           if os.path.exists(p):
               with open(p, 'r') as f: c = f.read()
-              c = re.sub(r'\(game\?\.titleName\s*\?\+\s*"\'s",\s*default:\s*"all"\)', r'(game?.titleName ?? "all")', c)
+              c = c.replace("\(game?.titleName ?+ \"'s\", default: \"all\")", "\(game?.titleName ?? \"all\")")
               with open(p, 'w') as f: f.write(c)
 
-          # 3. 彻底修复 EmulationView 的初始化权限错误（将 private 改为 internal）
+          # 3. 彻底修复 EmulationView 的初始化权限错误（暴力字符串替换，确保成功）
           p = 'melonx-src/src/MeloNX/MeloNX/UI/Emulation/EmulationView.swift'
           if os.path.exists(p):
               with open(p, 'r') as f: c = f.read()
-              c = re.sub(r'\b(private|fileprivate)\s+init\s*\(', 'init(', c)
-              c = re.sub(r'private\s+extension\s+EmulationView', 'extension EmulationView', c)
+              c = c.replace('private init', 'init')
+              c = c.replace('fileprivate init', 'init')
               with open(p, 'w') as f: f.write(c)
 
           # 4. 修复部署目标版本过高
@@ -78,7 +77,8 @@ jobs:
           SCHEME=$(xcodebuild -list -project $(basename "$XCODE_PROJ") | grep -A 5 "Schemes:" | tail -n +2 | head -n 1 | xargs)
           echo "Using Scheme: $SCHEME"
           
-          xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" CODE_SIGNING_ALLOWED=NO
+          # 强制使用 Swift 5.0 以避免 Swift 6 的严格并发检查，并覆盖 Bundle ID
+          xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" SWIFT_VERSION=5.0 CODE_SIGNING_ALLOWED=NO
 
       - name: Package IPA
         run: |
