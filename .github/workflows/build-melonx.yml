@@ -5,7 +5,8 @@ on:
 
 jobs:
   compile-ipa:
-    runs-on: macos-14
+    # 关键修改：从 macos-14 换成 macos-15，它自带 Xcode 16
+    runs-on: macos-15
 
     steps:
       - name: Checkout Repository
@@ -38,7 +39,6 @@ jobs:
           SCHEME=$(xcodebuild -list -project $(basename "$XCODE_PROJ") | grep -A 5 "Schemes:" | tail -n +2 | head -n 1 | xargs)
           echo "Using Scheme: $SCHEME"
           
-          # 只在这里通过 PRODUCT_BUNDLE_IDENTIFIER 参数修改包名，不碰源码文件
           xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" CODE_SIGNING_ALLOWED=NO
 
       - name: Package IPA
