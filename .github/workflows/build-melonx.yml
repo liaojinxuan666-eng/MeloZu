@@ -28,7 +28,7 @@ jobs:
           cd melonx-src
           dotnet publish src/Ryujinx.Library -c Release -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER --self-contained true
 
-      - name: Patch Source Code for Xcode 16 Compatibility
+      - name: Patch Source Code
         run: |
           cat > patch.py << 'EOF'
           import os
@@ -47,7 +47,7 @@ jobs:
               c = c.replace("\(game?.titleName ?+ \"'s\", default: \"all\")", "\(game?.titleName ?? \"all\")")
               with open(p, 'w') as f: f.write(c)
 
-          # 3. 真正的修复：去掉属性上的 private，让自动生成的 memberwise init 恢复为 internal
+          # 3. 去掉属性上的 private，让自动生成的 memberwise init 恢复为 internal
           p = 'melonx-src/src/MeloNX/MeloNX/UI/Emulation/EmulationView.swift'
           if os.path.exists(p):
               with open(p, 'r') as f: c = f.read()
@@ -61,6 +61,25 @@ jobs:
               with open(p, 'r') as f: c = f.read()
               c = c.replace('IPHONEOS_DEPLOYMENT_TARGET = 26.2;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;')
               with open(p, 'w') as f: f.write(c)
+
+          # 5. 【新增】全项目范围替换所有旧 bundleID 和 URL Scheme
+          for root, dirs, files in os.walk('melonx-src'):
+              for fname in files:
+                  if fname.endswith(('.plist', '.pbxproj', '.xcconfig', '.swift', '.entitlements', '.storyboard', '.xib')):
+                      fp = os.path.join(root, fname)
+                      try:
+                          with open(fp, 'r', encoding='utf-8') as f: c = f.read()
+                          original = c
+                          # 把所有已知的旧 bundleID 变体替换为新值
+                          for old in ['com.stossy11.MeloNX', 'com.stossy11.melonx', 
+                                      'com.melodious.dst', 'com.playdigious.dst',
+                                      'com.stossy11.MeloNXLite']:
+                              c = c.replace(old, 'com.melozu.stossy11')
+                          if c != original:
+                              with open(fp, 'w', encoding='utf-8') as f: f.write(c)
+                              print(f'Replaced bundleID in {fp}')
+                      except Exception as e:
+                          pass
 
           print('Patch applied successfully!')
           EOF
@@ -78,13 +97,32 @@ jobs:
           
           xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" SWIFT_VERSION=5.0 CODE_SIGNING_ALLOWED=NO
 
-      - name: Package IPA
+      - name: Package IPA (clean payload)
         run: |
           cd melonx-src
+          # 先清空可能的旧 Payload 目录
+          rm -rf Payload
           mkdir -p Payload
-          find . -name "*.app" -type d -exec cp -R {} Payload/ \;
-          zip -r MeloZu.ipa Payload
+          
+          # 找到 Release-iphoneos 目录下唯一的 .app（避免把子目录里的 .app 一起拷进去）
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
+          echo "Found app: $APP_PATH"
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No .app found!"
+            exit 1
+          fi
+          
+          cp -R "$APP_PATH" Payload/
+          
+          # 打印一下 Payload 里到底有什么，方便排查
+          echo "=== Payload contents ==="
+          ls -la Payload/
+          
+          # 用 ditto 打包（比 zip 更兼容 iOS 安装）
+          ditto -c -k --sequesterRsrc --keepParent Payload MeloZu.ipa
           mv MeloZu.ipa $GITHUB_WORKSPACE/
+          ls -la $GITHUB_WORKSPACE/MeloZu.ipa
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
