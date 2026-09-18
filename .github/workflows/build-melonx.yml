@@ -1,47 +1,65 @@
-name: Build MeloZu (M别的eloNX Fusion)
+name: Build MeloZu
 
 on:
-  workflow_dispatch:   # 手动点击触发
+  workflow_dispatch:
 
 jobs:
   compile-ipa:
-    runs-on: macos-14  # 必须的 macOS 环境
+    runs-on: macos-14
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Clone MeloNX 2.6 Source
+        run: |
+          git clone --depth 1 --branch 2.6 https://git.ryujinx.app/projects/MeloNX.git melonx-src
+
+      - name: Print Source Structure (Debug)
+        run: |
+          cd melonx-src
+          find . -maxdepth 3 -type d | head -n 50
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
+      - name: Install iOS Workload
+        run: dotnet workload install ios
+
       - name: Compile Ryujinx Core (C#)
         run: |
+          cd melonx-src
           dotnet publish src/Ryujinx.Library -c Release -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER --self-contained true
 
-      - name: Force Change Bundle Identifier (源码级别)
+      - name: Force Change Bundle Identifier
         run: |
-          # 全局搜索并替换源码中原始包名为 com.melozu.stossy11
+          cd melonx-src
           find . -type f \( -name "*.pbxproj" -o -name "Info.plist" -o -name "*.xcconfig" \) -exec sed -i '' 's/com.stossy11.MeloNX/com.melozu.stossy11/g' {} +
-          # 防止还有原始包名漏网，再替换一次
-          find . -type f \( -name "*.pbxproj" -o -name "Info.plist" -o -name "*.xcconfig" \) -exec sed -i '' 's/com.melodious.dst/com.melozu.stossy11/g' {} +
 
       - name: Build iOS App with Xcode
         run: |
-          cd src/MeloNX
-          # 双保险，覆盖 Bundle ID，并关闭签名
-          xcodebuild -project MeloNX.xcodeproj -scheme MeloNX -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" CODE_SIGNING_ALLOWED=NO
+          cd melonx-src
+          XCODE_PROJ=$(find . -name "*.xcodeproj" | head -n 1)
+          echo "Found Xcode Project: $XCODE_PROJ"
+          cd $(dirname "$XCODE_PROJ")
+          
+          SCHEME=$(xcodebuild -list -project $(basename "$XCODE_PROJ") | grep -A 5 "Schemes:" | tail -n +2 | head -n 1 | xargs)
+          echo "Using Scheme: $SCHEME"
+          
+          xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" CODE_SIGNING_ALLOWED=NO
 
       - name: Package IPA
         run: |
+          cd melonx-src
           mkdir -p Payload
           find . -name "*.app" -type d -exec cp -R {} Payload/ \;
-          zip -r MeloZu-unsigned.ipa Payload
-          ls -la
+          zip -r MeloZu.ipa Payload
+          mv MeloZu.ipa $GITHUB_WORKSPACE/
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MeloZu-2.6-unsigned-ipa
-          path: MeloZu-unsigned.ipa
+          name: MeloZu-unsigned-ipa
+          path: MeloZu.ipa
