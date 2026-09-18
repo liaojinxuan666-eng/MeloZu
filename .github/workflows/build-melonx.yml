@@ -33,6 +33,7 @@ jobs:
         run: |
           cat > patch.py << 'EOF'
           import os
+          import re
 
           # 1. 修复 Toolbar 的 iOS 26 API 问题
           p = 'melonx-src/src/MeloNX/MeloNX/UI/Main/GamesList/Elements/GamesListView+ToolBar.swift'
@@ -48,13 +49,27 @@ jobs:
               c = c.replace("\(game?.titleName ?+ \"'s\", default: \"all\")", "\(game?.titleName ?? \"all\")")
               with open(p, 'w') as f: f.write(c)
 
-          # 3. 彻底修复 EmulationView 的初始化权限错误（暴力字符串替换，确保成功）
+          # 3. 彻底修复 EmulationView 的初始化权限错误（暴力法：找到 init(game: 的位置，往前清掉 private）
           p = 'melonx-src/src/MeloNX/MeloNX/UI/Emulation/EmulationView.swift'
           if os.path.exists(p):
-              with open(p, 'r') as f: c = f.read()
-              c = c.replace('private init', 'init')
-              c = c.replace('fileprivate init', 'init')
-              with open(p, 'w') as f: f.write(c)
+              with open(p, 'r') as f:
+                  lines = f.readlines()
+              
+              for i, line in enumerate(lines):
+                  if 'init(game:' in line:
+                      # 往前看最多10行，把所有 private 和 fileprivate 删掉
+                      j = i
+                      count = 0
+                      while j >= 0 and count < 10:
+                          lines[j] = lines[j].replace('private', '').replace('fileprivate', '')
+                          if 'init' in lines[j] or 'func' in lines[j] or 'struct' in lines[j] or 'extension' in lines[j]:
+                              break
+                          j -= 1
+                          count += 1
+                      break # 只处理第一个找到的 init
+              
+              with open(p, 'w') as f:
+                  f.writelines(lines)
 
           # 4. 修复部署目标版本过高
           p = 'melonx-src/src/MeloNX/MeloNX.xcodeproj/project.pbxproj'
