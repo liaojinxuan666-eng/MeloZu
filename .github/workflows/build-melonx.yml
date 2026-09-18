@@ -5,8 +5,7 @@ on:
 
 jobs:
   compile-ipa:
-    # 关键修改：从 macos-14 换成 macos-15，它自带 Xcode 16
-    runs-on: macos-15
+    runs-on: macos-15 # 必须用 macOS 15 (Xcode 16)
 
     steps:
       - name: Checkout Repository
@@ -28,6 +27,41 @@ jobs:
         run: |
           cd melonx-src
           dotnet publish src/Ryujinx.Library -c Release -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER --self-contained true
+
+      # 关键步骤：自动修复源码中的编译错误
+      - name: Patch Source Code for Xcode 16 Compatibility
+        run: |
+          python3 -c "
+          import os
+
+          # 1. 修复 Toolbar 的 iOS 26 API 问题
+          p = 'melonx-src/src/MeloNX/MeloNX/UI/Main/GamesList/Elements/GamesListView+ToolBar.swift'
+          if os.path.exists(p):
+              with open(p, 'r') as f: c = f.read()
+              c = c.replace('.sharedBackgroundVisibility(.hidden)', '')
+              with open(p, 'w') as f: f.write(c)
+
+          # 2. 修复 RyujinxController 的字符串拼接语法错误
+          p = 'melonx-src/src/MeloNX/MeloNX/Core/RyujinxController.swift'
+          if os.path.exists(p):
+              with open(p, 'r') as f: c = f.read()
+              c = c.replace(r\"\"\"\(game?.titleName ?+ \"'s\", default: \"all\")\"\"\", r\"\"\"\(game?.titleName ?? \"all\")\"\"\")
+              with open(p, 'w') as f: f.write(c)
+
+          # 3. 修复 EmulationView 初始化权限错误
+          p = 'melonx-src/src/MeloNX/MeloNX/UI/Emulation/EmulationView.swift'
+          if os.path.exists(p):
+              with open(p, 'r') as f: c = f.read()
+              c = c.replace('private init', 'init')
+              with open(p, 'w') as f: f.write(c)
+
+          # 4. 修复部署目标版本过高
+          p = 'melonx-src/src/MeloNX/MeloNX.xcodeproj/project.pbxproj'
+          if os.path.exists(p):
+              with open(p, 'r') as f: c = f.read()
+              c = c.replace('IPHONEOS_DEPLOYMENT_TARGET = 26.2;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;')
+              with open(p, 'w') as f: f.write(c)
+          "
 
       - name: Build iOS App with Xcode
         run: |
