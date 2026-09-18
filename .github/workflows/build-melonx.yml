@@ -5,7 +5,7 @@ on:
 
 jobs:
   compile-ipa:
-    runs-on: macos-15 # 必须用 macOS 15 (Xcode 16)
+    runs-on: macos-15
 
     steps:
       - name: Checkout Repository
@@ -28,12 +28,10 @@ jobs:
           cd melonx-src
           dotnet publish src/Ryujinx.Library -c Release -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER --self-contained true
 
-      # 关键步骤：自动修复源码中的编译错误
       - name: Patch Source Code for Xcode 16 Compatibility
         run: |
           cat > patch.py << 'EOF'
           import os
-          import re
 
           # 1. 修复 Toolbar 的 iOS 26 API 问题
           p = 'melonx-src/src/MeloNX/MeloNX/UI/Main/GamesList/Elements/GamesListView+ToolBar.swift'
@@ -49,27 +47,13 @@ jobs:
               c = c.replace("\(game?.titleName ?+ \"'s\", default: \"all\")", "\(game?.titleName ?? \"all\")")
               with open(p, 'w') as f: f.write(c)
 
-          # 3. 彻底修复 EmulationView 的初始化权限错误（暴力法：找到 init(game: 的位置，往前清掉 private）
+          # 3. 真正的修复：去掉属性上的 private，让自动生成的 memberwise init 恢复为 internal
           p = 'melonx-src/src/MeloNX/MeloNX/UI/Emulation/EmulationView.swift'
           if os.path.exists(p):
-              with open(p, 'r') as f:
-                  lines = f.readlines()
-              
-              for i, line in enumerate(lines):
-                  if 'init(game:' in line:
-                      # 往前看最多10行，把所有 private 和 fileprivate 删掉
-                      j = i
-                      count = 0
-                      while j >= 0 and count < 10:
-                          lines[j] = lines[j].replace('private', '').replace('fileprivate', '')
-                          if 'init' in lines[j] or 'func' in lines[j] or 'struct' in lines[j] or 'extension' in lines[j]:
-                              break
-                          j -= 1
-                          count += 1
-                      break # 只处理第一个找到的 init
-              
-              with open(p, 'w') as f:
-                  f.writelines(lines)
+              with open(p, 'r') as f: c = f.read()
+              c = c.replace('@StateObject private var nativeSettingsManager', '@StateObject var nativeSettingsManager')
+              c = c.replace('private var air = Air.shared', 'var air = Air.shared')
+              with open(p, 'w') as f: f.write(c)
 
           # 4. 修复部署目标版本过高
           p = 'melonx-src/src/MeloNX/MeloNX.xcodeproj/project.pbxproj'
@@ -92,7 +76,6 @@ jobs:
           SCHEME=$(xcodebuild -list -project $(basename "$XCODE_PROJ") | grep -A 5 "Schemes:" | tail -n +2 | head -n 1 | xargs)
           echo "Using Scheme: $SCHEME"
           
-          # 强制使用 Swift 5.0 以避免 Swift 6 的严格并发检查，并覆盖 Bundle ID
           xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" SWIFT_VERSION=5.0 CODE_SIGNING_ALLOWED=NO
 
       - name: Package IPA
