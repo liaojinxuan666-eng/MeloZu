@@ -15,11 +15,6 @@ jobs:
         run: |
           git clone --depth 1 --branch 2.6 https://git.ryujinx.app/projects/MeloNX.git melonx-src
 
-      - name: Print Source Structure (Debug)
-        run: |
-          cd melonx-src
-          find . -maxdepth 3 -type d | head -n 50
-
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -33,11 +28,6 @@ jobs:
           cd melonx-src
           dotnet publish src/Ryujinx.Library -c Release -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER --self-contained true
 
-      - name: Force Change Bundle Identifier
-        run: |
-          cd melonx-src
-          find . -type f \( -name "*.pbxproj" -o -name "Info.plist" -o -name "*.xcconfig" \) -exec sed -i '' 's/com.stossy11.MeloNX/com.melozu.stossy11/g' {} +
-
       - name: Build iOS App with Xcode
         run: |
           cd melonx-src
@@ -48,6 +38,7 @@ jobs:
           SCHEME=$(xcodebuild -list -project $(basename "$XCODE_PROJ") | grep -A 5 "Schemes:" | tail -n +2 | head -n 1 | xargs)
           echo "Using Scheme: $SCHEME"
           
+          # 只在这里通过 PRODUCT_BUNDLE_IDENTIFIER 参数修改包名，不碰源码文件
           xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" CODE_SIGNING_ALLOWED=NO
 
       - name: Package IPA
