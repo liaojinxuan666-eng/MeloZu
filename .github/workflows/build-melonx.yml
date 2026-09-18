@@ -58,7 +58,6 @@ jobs:
               c = c.replace('IPHONEOS_DEPLOYMENT_TARGET = 26.2;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;')
               with open(p, 'w') as f: f.write(c)
 
-          # 全项目替换 bundleID
           for root, dirs, files in os.walk('melonx-src'):
               for fname in files:
                   if fname.endswith(('.plist', '.pbxproj', '.xcconfig', '.swift', '.entitlements')):
@@ -94,32 +93,49 @@ jobs:
           echo "$APP"
           echo "===== BUNDLE ID ====="
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist" || echo "not found"
-          echo "===== EXECUTABLE ====="
-          /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Info.plist" || echo "not found"
           echo "===== URL TYPES ====="
           /usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "$APP/Info.plist" || echo "no URLTypes"
           echo "===== LSApplicationQueriesSchemes ====="
           /usr/libexec/PlistBuddy -c "Print :LSApplicationQueriesSchemes" "$APP/Info.plist" || echo "no queries"
-          echo "===== Full Info.plist (text) ====="
-          plutil -p "$APP/Info.plist"
 
-      - name: Package IPA
+      - name: Package IPA (clean, unsigned)
         run: |
           cd melonx-src/src/MeloNX
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
+          echo "Packaging: $APP"
+
+          # 清理扩展属性，避免 TrollStore 解析异常
+          xattr -cr "$APP" 2>/dev/null || true
+
+          # 清理 app 里的 AppleDouble 和 DS_Store 文件
+          find "$APP" -name "._*" -delete 2>/dev/null || true
+          find "$APP" -name ".DS_Store" -delete 2>/dev/null || true
+
           rm -rf Payload
           mkdir -p Payload
-          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
-          echo "Found app: $APP"
-          if [ -z "$APP" ]; then
-            echo "ERROR: No .app found!"
-            exit 1
-          fi
           cp -R "$APP" Payload/
+
+          # 清理 Payload 里可能的 AppleDouble 文件
+          find Payload -name "._*" -delete 2>/dev/null || true
+          find Payload -name ".DS_Store" -delete 2>/dev/null || true
+
           echo "=== Payload contents ==="
           ls -la Payload/
-          ditto -c -k --sequesterRsrc --keepParent Payload MeloZu.ipa
+
+          # 用 zip 打包（不加任何扩展属性），然后立刻清理
+          cd Payload
+          zip -q -r -X ../MeloZu.ipa .
+          cd ..
+          # 把顶层结构改成正确的 Payload/ 形式（zip 从 Payload 目录内部打包，需要修正）
+          rm -f MeloZu.ipa
+          zip -q -r -X MeloZu.ipa Payload
+
           mv MeloZu.ipa $GITHUB_WORKSPACE/
           ls -la $GITHUB_WORKSPACE/MeloZu.ipa
+
+          # 验证 IPA 结构
+          echo "=== IPA structure ==="
+          unzip -l $GITHUB_WORKSPACE/MeloZu.ipa | head -20
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
