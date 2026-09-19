@@ -82,19 +82,26 @@ jobs:
 
           echo "===== Build Finished ====="
 
+      - name: Clean Build Artifacts
+        run: |
+          find src -type d \( -name bin -o -name obj \) -prune -exec rm -rf {} +
+
+          echo "===== Remaining Generated Files ====="
+          git status --short
+
       - name: Commit Build Metadata
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git status --short
-
-          git add -A
+          git add LICENSE.txt
+          git add distribution/legal/THIRDPARTY.md
+          git add .github/workflows/build-melonx.yml
 
           if git diff --cached --quiet; then
             echo "No repository changes."
             exit 0
           fi
 
-          git commit -m "Prepare MeloZu core build"
+          git commit -m "Update MeloZu build workflow"
           git push
