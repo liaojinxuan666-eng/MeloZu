@@ -1,4 +1,4 @@
-name: Import MeloNX 2.6
+name: Build MeloZu Core
 
 on:
   workflow_dispatch:
@@ -7,45 +7,16 @@ permissions:
   contents: write
 
 jobs:
-  import-source:
+  build-core:
     runs-on: macos-15
 
     steps:
       - name: Checkout MeloZu
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: Clone MeloNX 2.6
-        run: |
-          git clone --depth 1 --branch 2.6 https://git.ryujinx.app/projects/MeloNX.git melonx-src
-
-      - name: Copy MeloNX source into MeloZu
-        run: |
-          rm -rf src
-          rm -f Ryujinx.sln
-          rm -f Directory.Packages.props
-          rm -f global.json
-          rm -f nuget.config
-          rm -f Directory.Build.props
-
-          cp -R melonx-src/src .
-
-          for f in Ryujinx.sln Directory.Packages.props global.json nuget.config Directory.Build.props; do
-            if [ -f "melonx-src/$f" ]; then
-              cp "melonx-src/$f" .
-            fi
-          done
-
-          rm -rf melonx-src
-
-          echo "===== MeloZu source imported ====="
-          ls -la
-
-          echo "===== Source directories ====="
-          find src -maxdepth 1 -type d | sort
-
-      - name: Setup .NET
+      - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
@@ -54,36 +25,76 @@ jobs:
         run: |
           dotnet workload install ios
 
-      - name: Verify Imported Source
+      - name: Verify MeloZu Source
         run: |
-          echo "===== .NET version ====="
+          echo "===== Repository ====="
+          pwd
+
+          echo "===== Source ====="
+          test -d src
+          echo "src/ found"
+
+          echo "===== Ryujinx.Library ====="
+          test -f src/Ryujinx.Library/Ryujinx.Library.csproj
+          echo "Ryujinx.Library.csproj found"
+
+          echo "===== MeloZu Swift ====="
+          test -f src/MeloNX/MeloNX/Core/Ryujinx.swift
+          echo "Ryujinx.swift found"
+
+          echo "===== Project Count ====="
+          find src -name "*.csproj" | wc -l
+
+      - name: Show .NET and Xcode
+        run: |
+          echo "===== .NET ====="
           dotnet --version
 
-          echo "===== Solution ====="
-          ls -lh Ryujinx.sln
+          echo "===== Xcode ====="
+          xcodebuild -version
 
-          echo "===== Library project ====="
-          if [ -f "src/Ryujinx.Library/Ryujinx.Library.csproj" ]; then
-            echo "Ryujinx.Library found."
-          else
-            echo "ERROR: Ryujinx.Library.csproj not found."
-            exit 1
-          fi
+          echo "===== SDK ====="
+          xcrun --sdk iphoneos --show-sdk-path
 
-          echo "===== Important projects ====="
-          find src -maxdepth 2 -name "*.csproj" | sort | head -80
+      - name: Restore MeloZu Core
+        run: |
+          dotnet restore \
+            src/Ryujinx.Library/Ryujinx.Library.csproj \
+            -r ios-arm64
 
-      - name: Commit MeloNX 2.6 source
+      - name: Build MeloZu Core
+        run: |
+          dotnet publish \
+            src/Ryujinx.Library/Ryujinx.Library.csproj \
+            -c Release \
+            -r ios-arm64 \
+            -p:ExtraDefineConstants=DISABLE_UPDATER \
+            --self-contained true
+
+      - name: Verify NativeAOT Output
+        run: |
+          echo "===== Searching NativeAOT Output ====="
+
+          find src/Ryujinx.Library/bin/Release \
+            -type f \
+            \( -name "*.dylib" -o -name "*.framework" \) \
+            | sort
+
+          echo "===== Build Finished ====="
+
+      - name: Commit Build Metadata
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          git status --short
+
           git add -A
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "No repository changes."
             exit 0
           fi
 
-          git commit -m "Import MeloNX 2.6 source"
+          git commit -m "Prepare MeloZu core build"
           git push
