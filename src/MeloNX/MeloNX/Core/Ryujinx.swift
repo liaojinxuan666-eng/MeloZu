@@ -7,6 +7,95 @@
 
 import MetalKit
 
+// MARK: - MeloZu backend boundary
+
+/// Stable backend contract for MeloZu.  The first implementation delegates to
+/// the existing MeloNX/Ryujinx native ABI without changing emulator behavior.
+/// Yuzu/Dynarmic can implement the same boundary later.
+private protocol MeloZuBackend: AnyObject {
+    func initialize()
+    func stopEmulation()
+    func main(_ options: Options) -> Int
+    func setNativeWindow(_ layerPtr: UnsafeMutableRawPointer)
+    func setViewSize(_ rect: CGRect)
+    func setTargetFps(_ fps: Int32)
+    func touchBegan(_ point: CGPoint, index: Int)
+    func touchMoved(_ point: CGPoint, index: Int)
+    func touchEnded(index: Int)
+    func attachGamepad(_ id: UnsafeMutableRawPointer?, name: String, index: Int, type: ControllerType)
+    func detachGamepad(_ id: UnsafeMutableRawPointer?)
+    func setGamepadButtonState(_ id: UnsafeMutableRawPointer?, buttonId: Int, pressed: Bool)
+    func setGamepadStickAxis(_ id: UnsafeMutableRawPointer?, stickId: Int, x: Float, y: Float)
+    func setGamepadMotion(_ id: UnsafeMutableRawPointer?, motionType: Int, axis: SIMD3<Float>)
+    func initDualMapping() -> Bool
+}
+
+/// Ryujinx/MeloNX backend adapter.  This is intentionally thin: all existing
+/// C ABI entry points remain the source of truth until the backend is split out.
+private final class RyujinxBackend: MeloZuBackend {
+    func initialize() { MeloNX.initialize() }
+    func stopEmulation() { MeloNX.stop_emulation() }
+    func main(_ options: Options) -> Int { Int(MeloNX.main_ryujinx_sdl(options.toNative())) }
+    func setNativeWindow(_ layerPtr: UnsafeMutableRawPointer) { MeloNX.set_native_window(layerPtr) }
+    func setViewSize(_ rect: CGRect) { MeloNX.set_view_size(Int32(rect.width), Int32(rect.height)) }
+    func setTargetFps(_ fps: Int32) { set_unbounded_present_target_fps(fps) }
+    func touchBegan(_ point: CGPoint, index: Int) { MeloNX.touch_began(Float(point.x), Float(point.y), Int32(index)) }
+    func touchMoved(_ point: CGPoint, index: Int) { MeloNX.touch_moved(Float(point.x), Float(point.y), Int32(index)) }
+    func touchEnded(index: Int) { MeloNX.touch_ended(Int32(index)) }
+    func attachGamepad(_ id: UnsafeMutableRawPointer?, name: String, index: Int, type: ControllerType) {
+        _ = name.withCString { MeloNX.attach_gamepad($0, id, Int32(index), type) }
+    }
+    func detachGamepad(_ id: UnsafeMutableRawPointer?) { MeloNX.detach_gamepad(id) }
+    func setGamepadButtonState(_ id: UnsafeMutableRawPointer?, buttonId: Int, pressed: Bool) {
+        MeloNX.set_gamepad_button_state(id, Int32(buttonId), pressed ? 1 : 0)
+    }
+    func setGamepadStickAxis(_ id: UnsafeMutableRawPointer?, stickId: Int, x: Float, y: Float) {
+        MeloNX.set_gamepad_stick_axis(id, Int32(stickId), x, y)
+    }
+    func setGamepadMotion(_ id: UnsafeMutableRawPointer?, motionType: Int, axis: SIMD3<Float>) {
+        MeloNX.set_gamepad_motion_axis(id, Int32(motionType), axis.x, axis.y, axis.z)
+    }
+    func initDualMapping() -> Bool { MeloNX.init_dualmapping() }
+}
+
+/// Single runtime owner.  Backend selection is deliberately centralized so
+/// the SwiftUI layer does not know whether Ryujinx or Yuzu is running.
+private final class MeloZuCore {
+    static let shared = MeloZuCore()
+
+    private let backend: MeloZuBackend
+
+    private init() {
+        // Phase 1: Ryujinx backend. Phase 2 will add YuzuBackend here without
+        // changing the public Swift-facing facade below.
+        backend = RyujinxBackend()
+    }
+
+    func initialize() { backend.initialize() }
+    func stopEmulation() { backend.stopEmulation() }
+    func main(_ options: Options) -> Int { backend.main(options) }
+    func setNativeWindow(_ layerPtr: UnsafeMutableRawPointer) { backend.setNativeWindow(layerPtr) }
+    func setViewSize(_ rect: CGRect) { backend.setViewSize(rect) }
+    func setTargetFps(_ fps: Int32) { backend.setTargetFps(fps) }
+    func touchBegan(_ point: CGPoint, index: Int) { backend.touchBegan(point, index: index) }
+    func touchMoved(_ point: CGPoint, index: Int) { backend.touchMoved(point, index: index) }
+    func touchEnded(index: Int) { backend.touchEnded(index: index) }
+    func attachGamepad(_ id: UnsafeMutableRawPointer?, name: String, index: Int, type: ControllerType) {
+        backend.attachGamepad(id, name: name, index: index, type: type)
+    }
+    func detachGamepad(_ id: UnsafeMutableRawPointer?) { backend.detachGamepad(id) }
+    func setGamepadButtonState(_ id: UnsafeMutableRawPointer?, buttonId: Int, pressed: Bool) {
+        backend.setGamepadButtonState(id, buttonId: buttonId, pressed: pressed)
+    }
+    func setGamepadStickAxis(_ id: UnsafeMutableRawPointer?, stickId: Int, x: Float, y: Float) {
+        backend.setGamepadStickAxis(id, stickId: stickId, x: x, y: y)
+    }
+    func setGamepadMotion(_ id: UnsafeMutableRawPointer?, motionType: Int, axis: SIMD3<Float>) {
+        backend.setGamepadMotion(id, motionType: motionType, axis: axis)
+    }
+    func initDualMapping() -> Bool { backend.initDualMapping() }
+}
+
 enum FirmwareInstallationError: Error {
     case failedInstall(String)
 }
@@ -15,19 +104,19 @@ final class Ryujinx {
     static var emulationView: MTKView?
     
     static func initialize() {
-        MeloNX.initialize()
+        MeloZuCore.shared.initialize()
     }
     
     static func stopEmulation() {
-        MeloNX.stop_emulation()
+        MeloZuCore.shared.stopEmulation()
     }
     
     static func mainRyu(_ native: Options) -> Int {
-        return Int(MeloNX.main_ryujinx_sdl(native.toNative()))
+        return MeloZuCore.shared.main(native)
     }
     
     static func setNativeWindow(_ layerPtr: UnsafeMutableRawPointer) {
-        MeloNX.set_native_window(layerPtr)
+        MeloZuCore.shared.setNativeWindow(layerPtr)
     }
     
     static func getGameInfo(arg0: Int32, arg1: NSString, path: URL) -> GameInfo {
@@ -36,27 +125,27 @@ final class Ryujinx {
     }
     
     static func attachGamepad(_ id: UnsafeMutableRawPointer?, _ name: String, _ index: Int, _ type: ControllerType) {
-        _ = name.withCString { MeloNX.attach_gamepad($0, id, Int32(index), type)  }
+        MeloZuCore.shared.attachGamepad(id, name: name, index: index, type: type)
     }
     
     static func detachGamepad(_ id: UnsafeMutableRawPointer?) {
-        MeloNX.detach_gamepad(id)
+        MeloZuCore.shared.detachGamepad(id)
     }
 
     static func setGamepadButtonState(_ id: UnsafeMutableRawPointer?, buttonId: Int, pressed: Bool) {
-        MeloNX.set_gamepad_button_state(id, Int32(buttonId), pressed ? 1 : 0)
+        MeloZuCore.shared.setGamepadButtonState(id, buttonId: buttonId, pressed: pressed)
     }
 
     static func setGamepadStickAxis(_ id: UnsafeMutableRawPointer?, stickId: Int, x: Float, y: Float) {
-        MeloNX.set_gamepad_stick_axis(id, Int32(stickId), x, y)
+        MeloZuCore.shared.setGamepadStickAxis(id, stickId: stickId, x: x, y: y)
     }
     
     static func setGamepadMotion(_ id: UnsafeMutableRawPointer?, motionType: Int, axis: SIMD3<Float>) {
-        MeloNX.set_gamepad_motion_axis(id, Int32(motionType), axis.x, axis.y, axis.z)
+        MeloZuCore.shared.setGamepadMotion(id, motionType: motionType, axis: axis)
     }
 
     static func initDualMapping() -> Bool {
-        MeloNX.init_dualmapping()
+        MeloZuCore.shared.initDualMapping()
     }
     
     static func reloadKeySet() {
@@ -83,24 +172,24 @@ final class Ryujinx {
     }
     
     static func touchBegan(_ point: CGPoint, index: Int) {
-        MeloNX.touch_began(Float(point.x), Float(point.y), Int32(index))
+        MeloZuCore.shared.touchBegan(point, index: index)
     }
     
     static func touchEnded(index: Int) {
-        MeloNX.touch_ended(Int32(index))
+        MeloZuCore.shared.touchEnded(index: index)
     }
     
     static func touchMoved(_ point: CGPoint, index: Int) {
-        MeloNX.touch_moved(Float(point.x), Float(point.y), Int32(index))
+        MeloZuCore.shared.touchMoved(point, index: index)
     }
     
     static func setViewSize(_ rect: CGRect) {
-        MeloNX.set_view_size(Int32(rect.width), Int32(rect.height))
+        MeloZuCore.shared.setViewSize(rect)
     }
 
     static func setUnboundedPresentTargetFps(for screen: UIScreen?) {
         let targetFps = max(1, screen?.maximumFramesPerSecond ?? Air.shared.airScreen?.maximumFramesPerSecond ?? UIScreen.main.maximumFramesPerSecond)
-        set_unbounded_present_target_fps(Int32(targetFps))
+        MeloZuCore.shared.setTargetFps(Int32(targetFps))
     }
     
     private static func getDlcList(titleId: String, path: String) -> DlcNcaListC {
@@ -268,7 +357,7 @@ final class Ryujinx {
     }
 
     static func stopEmulation() {
-        MeloNX.stop_emulation()
+        MeloZuCore.shared.stopEmulation()
     }
 
     static func mainRyu(argv: [String]) -> Int {
@@ -315,7 +404,7 @@ final class Ryujinx {
     }
 
     static func touchEnded(index: Int) {
-        MeloNX.touch_ended(Int32(index))
+        MeloZuCore.shared.touchEnded(index: index)
     }
 
     static func refreshAccountManager() {
@@ -345,20 +434,20 @@ final class Ryujinx {
     }
     
     static func detachGamepad(_ id: UnsafeMutableRawPointer?) {
-        MeloNX.detach_gamepad(id)
+        MeloZuCore.shared.detachGamepad(id)
     }
 
     static func setGamepadButtonState(_ id: UnsafeMutableRawPointer?, buttonId: Int, pressed: Bool) {
         print("Gamepad button State \(Int32(buttonId)), pressed \(pressed)")
-        MeloNX.set_gamepad_button_state(id, Int32(buttonId), pressed ? 1 : 0)
+        MeloZuCore.shared.setGamepadButtonState(id, buttonId: buttonId, pressed: pressed)
     }
 
     static func setGamepadStickAxis(_ id: UnsafeMutableRawPointer?, stickId: Int, x: Float, y: Float) {
-        MeloNX.set_gamepad_stick_axis(id, Int32(stickId), x, y)
+        MeloZuCore.shared.setGamepadStickAxis(id, stickId: stickId, x: x, y: y)
     }
     
     static func setGamepadMotion(_ id: UnsafeMutableRawPointer?, motionType: Int, axis: SIMD3<Float>) {
-        MeloNX.set_gamepad_motion_axis(id, Int32(motionType), axis.x, axis.y, axis.z)
+        MeloZuCore.shared.setGamepadMotion(id, motionType: motionType, axis: axis)
     }
 
     static var avatars: AvatarArray {
