@@ -1,0 +1,5 @@
+MeloZu
+
+Copyright (c) 2026 MeloZu contributors.
+
+This project is under active development.
