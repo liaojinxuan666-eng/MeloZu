@@ -1,124 +1,56 @@
-name: Build MeloZu
+name: Import MeloNX 2.6
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  compile-ipa:
+  import-source:
     runs-on: macos-15
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout MeloZu
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Clone MeloNX 2.6 Source
+      - name: Clone MeloNX 2.6
         run: |
           git clone --depth 1 --branch 2.6 https://git.ryujinx.app/projects/MeloNX.git melonx-src
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install iOS Workload
-        run: dotnet workload install ios
-
-      - name: Compile Ryujinx Core (C#)
+      - name: Copy MeloNX source into MeloZu
         run: |
-          cd melonx-src
-          dotnet publish src/Ryujinx.Library -c Release -r ios-arm64 -p:ExtraDefineConstants=DISABLE_UPDATER --self-contained true
+          rm -rf src
+          rm -f Ryujinx.sln Directory.Packages.props global.json nuget.config
 
-      - name: Patch Source Code
+          cp -R melonx-src/src .
+
+          for f in Ryujinx.sln Directory.Packages.props global.json nuget.config; do
+            if [ -f "melonx-src/$f" ]; then
+              cp "melonx-src/$f" .
+            fi
+          done
+
+          rm -rf melonx-src
+
+          echo "===== MeloZu source imported ====="
+          ls -la
+          echo "===== Source directories ====="
+          find src -maxdepth 1 -type d | sort
+
+      - name: Commit MeloNX 2.6 source
         run: |
-          cat > patch.py << 'EOF'
-          import os
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          p = 'melonx-src/src/MeloNX/MeloNX/UI/Main/GamesList/Elements/GamesListView+ToolBar.swift'
-          if os.path.exists(p):
-              with open(p, 'r') as f: c = f.read()
-              c = c.replace('.sharedBackgroundVisibility(.hidden)', '')
-              with open(p, 'w') as f: f.write(c)
+          git add -A
 
-          p = 'melonx-src/src/MeloNX/MeloNX/Core/RyujinxController.swift'
-          if os.path.exists(p):
-              with open(p, 'r') as f: c = f.read()
-              c = c.replace("\(game?.titleName ?+ \"'s\", default: \"all\")", "\(game?.titleName ?? \"all\")")
-              with open(p, 'w') as f: f.write(c)
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
 
-          p = 'melonx-src/src/MeloNX/MeloNX/UI/Emulation/EmulationView.swift'
-          if os.path.exists(p):
-              with open(p, 'r') as f: c = f.read()
-              c = c.replace('@StateObject private var nativeSettingsManager', '@StateObject var nativeSettingsManager')
-              c = c.replace('private var air = Air.shared', 'var air = Air.shared')
-              with open(p, 'w') as f: f.write(c)
-
-          p = 'melonx-src/src/MeloNX/MeloNX.xcodeproj/project.pbxproj'
-          if os.path.exists(p):
-              with open(p, 'r') as f: c = f.read()
-              c = c.replace('IPHONEOS_DEPLOYMENT_TARGET = 26.2;', 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;')
-              with open(p, 'w') as f: f.write(c)
-
-          for root, dirs, files in os.walk('melonx-src'):
-              for fname in files:
-                  if fname.endswith(('.plist', '.pbxproj', '.xcconfig', '.swift', '.entitlements')):
-                      fp = os.path.join(root, fname)
-                      try:
-                          with open(fp, 'r', encoding='utf-8') as f: c = f.read()
-                          original = c
-                          for old in ['com.stossy11.MeloNX', 'com.stossy11.melonx',
-                                      'com.melodious.dst', 'com.playdigious.dst',
-                                      'com.stossy11.MeloNXLite']:
-                              c = c.replace(old, 'com.melozu.stossy11')
-                          if c != original:
-                              with open(fp, 'w', encoding='utf-8') as f: f.write(c)
-                      except Exception:
-                          pass
-          print('Patch applied!')
-          EOF
-          python3 patch.py
-
-      - name: Build iOS App with Xcode
-        run: |
-          cd melonx-src
-          XCODE_PROJ=$(find . -name "*.xcodeproj" | head -n 1)
-          cd $(dirname "$XCODE_PROJ")
-          SCHEME=$(xcodebuild -list -project $(basename "$XCODE_PROJ") | grep -A 5 "Schemes:" | tail -n +2 | head -n 1 | xargs)
-          xcodebuild -project $(basename "$XCODE_PROJ") -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build PRODUCT_BUNDLE_IDENTIFIER="com.melozu.stossy11" SWIFT_VERSION=5.0 CODE_SIGNING_ALLOWED=NO
-
-      - name: Strip iOS 26 only fields from Info.plist
-        run: |
-          cd melonx-src/src/MeloNX
-          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
-          PLIST="$APP/Info.plist"
-          echo "Stripping iOS 26-only keys from: $PLIST"
-
-          # 逐个删除 iOS 26 引入的字段
-          /usr/libexec/PlistBuddy -c "Delete :GCSupportsGameMode" "$PLIST" 2>/dev/null && echo "removed GCSupportsGameMode" || echo "GCSupportsGameMode not present"
-          /usr/libexec/PlistBuddy -c "Delete :LSSupportsGameMode" "$PLIST" 2>/dev/null && echo "removed LSSupportsGameMode" || echo "LSSupportsGameMode not present"
-
-          echo "===== Info.plist after stripping ====="
-          plutil -p "$PLIST" | head -60
-
-      - name: Package IPA
-        run: |
-          cd melonx-src/src/MeloNX
-          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
-          xattr -cr "$APP" 2>/dev/null || true
-          find "$APP" -name "._*" -delete 2>/dev/null || true
-          find "$APP" -name ".DS_Store" -delete 2>/dev/null || true
-
-          rm -rf Payload
-          mkdir -p Payload
-          cp -R "$APP" Payload/
-          find Payload -name "._*" -delete 2>/dev/null || true
-          find Payload -name ".DS_Store" -delete 2>/dev/null || true
-
-          zip -q -r -X MeloZu.ipa Payload
-          mv MeloZu.ipa $GITHUB_WORKSPACE/
-          ls -la $GITHUB_WORKSPACE/MeloZu.ipa
-
-      - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: MeloZu-unsigned-ipa
-          path: MeloZu.ipa
+          git commit -m "Import MeloNX 2.6 source"
+          git push
