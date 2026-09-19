@@ -23,11 +23,15 @@ jobs:
       - name: Copy MeloNX source into MeloZu
         run: |
           rm -rf src
-          rm -f Ryujinx.sln Directory.Packages.props global.json nuget.config
+          rm -f Ryujinx.sln
+          rm -f Directory.Packages.props
+          rm -f global.json
+          rm -f nuget.config
+          rm -f Directory.Build.props
 
           cp -R melonx-src/src .
 
-          for f in Ryujinx.sln Directory.Packages.props global.json nuget.config; do
+          for f in Ryujinx.sln Directory.Packages.props global.json nuget.config Directory.Build.props; do
             if [ -f "melonx-src/$f" ]; then
               cp "melonx-src/$f" .
             fi
@@ -37,8 +41,37 @@ jobs:
 
           echo "===== MeloZu source imported ====="
           ls -la
+
           echo "===== Source directories ====="
           find src -maxdepth 1 -type d | sort
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install iOS Workload
+        run: |
+          dotnet workload install ios
+
+      - name: Verify Imported Source
+        run: |
+          echo "===== .NET version ====="
+          dotnet --version
+
+          echo "===== Solution ====="
+          ls -lh Ryujinx.sln
+
+          echo "===== Library project ====="
+          if [ -f "src/Ryujinx.Library/Ryujinx.Library.csproj" ]; then
+            echo "Ryujinx.Library found."
+          else
+            echo "ERROR: Ryujinx.Library.csproj not found."
+            exit 1
+          fi
+
+          echo "===== Important projects ====="
+          find src -maxdepth 2 -name "*.csproj" | sort | head -80
 
       - name: Commit MeloNX 2.6 source
         run: |
