@@ -18,6 +18,8 @@ jobs:
     - name: Install Boost via Homebrew
       run: |
         brew install boost
+        mkdir -p Sudachi/Sudachi/Dependencies/boost
+        cp -R /opt/homebrew/include/boost/* Sudachi/Sudachi/Dependencies/boost/
 
     - name: Build Xcode project
       run: |
@@ -26,8 +28,6 @@ jobs:
                    -sdk iphoneos \
                    -configuration Release \
                    -derivedDataPath build \
-                   HEADER_SEARCH_PATHS="/opt/homebrew/include" \
-                   LIBRARY_SEARCH_PATHS="/opt/homebrew/lib" \
                    CODE_SIGNING_ALLOWED=NO \
                    CODE_SIGNING_REQUIRED=NO \
                    CODE_SIGN_IDENTITY="" \
