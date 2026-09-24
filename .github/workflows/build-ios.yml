@@ -15,14 +15,9 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install Missing Boost
+    - name: Install Boost via Homebrew
       run: |
-        cd Sudachi/Sudachi/Dependencies
-        curl -L -o boost.tar.gz https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.tar.gz
-        tar -xzf boost.tar.gz
-        mv boost-1.84.0 boost
-        rm boost.tar.gz
-        ls -la
+        brew install boost
 
     - name: Build Xcode project
       run: |
@@ -31,6 +26,8 @@ jobs:
                    -sdk iphoneos \
                    -configuration Release \
                    -derivedDataPath build \
+                   HEADER_SEARCH_PATHS="/opt/homebrew/include" \
+                   LIBRARY_SEARCH_PATHS="/opt/homebrew/lib" \
                    CODE_SIGNING_ALLOWED=NO \
                    CODE_SIGNING_REQUIRED=NO \
                    CODE_SIGN_IDENTITY="" \
