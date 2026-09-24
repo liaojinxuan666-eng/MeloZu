@@ -3,25 +3,29 @@ name: Build iOS App
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: # 允许你在网页上手动点击按钮触发编译
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build MeloZu iOS App
-    runs-on: macos-14 # 使用最新的 macOS 运行器
+    runs-on: macos-15
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
       with:
-        submodules: recursive # 自动拉取缺失的第三方依赖（比如 boost, llvm 等）
+        submodules: recursive
 
-    - name: Select Xcode Version
-      run: sudo xcode-select -s /Applications/Xcode.app
+    - name: Install Missing Boost
+      run: |
+        cd Sudachi/Sudachi/Dependencies
+        # 从官方仓库下载 Boost 源码，解压并重命名为正确目录
+        wget -q https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.tar.gz
+        tar -xzf boost-1.84.0.tar.gz
+        mv boost-1.84.0 boost
+        rm boost-1.84.0.tar.gz
 
     - name: Build Xcode project
       run: |
-        # 根据你截图里的结构，Xcode 项目在根目录下，叫 Pomelo.xcodeproj
         xcodebuild -project Pomelo.xcodeproj \
                    -scheme Pomelo \
                    -sdk iphoneos \
@@ -35,9 +39,7 @@ jobs:
     - name: Package into .ipa
       run: |
         mkdir -p Payload
-        # 自动寻找编译出来的 .app 文件
         APP_PATH=$(find build -name "*.app" -type d | head -n 1)
-        echo "找到编译好的 App 在: $APP_PATH"
         cp -r "$APP_PATH" Payload/
         zip -r MeloZu.ipa Payload/
         rm -rf Payload
@@ -47,4 +49,4 @@ jobs:
       with:
         name: MeloZu-ipa
         path: MeloZu.ipa
-        retention-days: 5 # 编译产物保留 5 天，过期自动删除
+        retention-days: 5
