@@ -18,11 +18,11 @@ jobs:
     - name: Install Missing Boost
       run: |
         cd Sudachi/Sudachi/Dependencies
-        # 从官方仓库下载 Boost 源码，解压并重命名为正确目录
-        wget -q https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.tar.gz
-        tar -xzf boost-1.84.0.tar.gz
+        # 用 curl 下载 Boost 源码，解压并改名为 boost
+        curl -L -o boost.tar.gz https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0.tar.gz
+        tar -xzf boost.tar.gz
         mv boost-1.84.0 boost
-        rm boost-1.84.0.tar.gz
+        rm boost.tar.gz
 
     - name: Build Xcode project
       run: |
