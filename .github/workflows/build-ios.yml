@@ -31,13 +31,37 @@ jobs:
           ls "$MVK_INC/MoltenVK" || exit 1
           ls "$VK_INC/vulkan" || exit 1
 
-          # 确保缺失的 vk_enum_string_helper.h 存在
-          if [ ! -f "$VK_INC/vulkan/vk_enum_string_helper.h" ]; then
-            echo "⚠️ 在 Homebrew vulkan-headers 中找不到 vk_enum_string_helper.h，正在下载..."
-            mkdir -p /tmp/vk_fix/vulkan
-            curl -L -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/main/include/vulkan/vk_enum_string_helper.h
-            echo "✅ 已下载到 /tmp/vk_fix"
+      - name: Download missing Vulkan helper headers
+        run: |
+          mkdir -p /tmp/vk_fix/vulkan
+
+          # 1. vk_enum_string_helper.h (来自 Vulkan-Headers 官方仓库)
+          echo "⬇️ 下载 vk_enum_string_helper.h ..."
+          curl -fsSL -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h \
+            https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/main/include/vulkan/vk_enum_string_helper.h
+
+          # 2. vk_mem_alloc.h (来自 VulkanMemoryAllocator 官方仓库)
+          echo "⬇️ 下载 vk_mem_alloc.h ..."
+          curl -fsSL -o /tmp/vk_fix/vk_mem_alloc.h \
+            https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/master/include/vk_mem_alloc.h
+
+          # 校验下载内容
+          echo "===== /tmp/vk_fix/vulkan/vk_enum_string_helper.h 前 3 行 ====="
+          head -n 3 /tmp/vk_fix/vulkan/vk_enum_string_helper.h
+          echo "===== /tmp/vk_fix/vk_mem_alloc.h 前 3 行 ====="
+          head -n 3 /tmp/vk_fix/vk_mem_alloc.h
+
+          # 如果下载的是 404 页面，主动报错
+          if grep -q "404: Not Found" /tmp/vk_fix/vulkan/vk_enum_string_helper.h; then
+            echo "❌ vk_enum_string_helper.h 下载失败（404）"
+            exit 1
           fi
+          if grep -q "404: Not Found" /tmp/vk_fix/vk_mem_alloc.h; then
+            echo "❌ vk_mem_alloc.h 下载失败（404）"
+            exit 1
+          fi
+
+          echo "✅ 缺失头文件准备完毕"
 
       - name: Build Xcode project
         run: |
