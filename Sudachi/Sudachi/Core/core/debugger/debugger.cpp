@@ -335,7 +335,7 @@ private:
 
     struct ConnectionState {
         boost::asio::ip::tcp::socket client_socket;
-        boost::process::async_pipe signal_pipe;
+        boost::process::v1::async_pipe signal_pipe;
 
         SignalInfo info;
         Kernel::KScopedAutoObject<Kernel::KThread> active_thread;
