@@ -2,19 +2,26 @@
 //  LibraryView.swift
 //  MeloZu
 //
-//  Main MeloZu home screen.
-//  The emulator core and game-launch flow are intentionally kept unchanged.
+//  MeloZu main home UI.
+//  Emulator core and emulation launch code are kept separate.
 //
 
 import SwiftUI
-import CryptoKit
-import Sudachi
+import Foundation
 import UIKit
+import UniformTypeIdentifiers
+import Sudachi
+import Combine
 
 struct LibraryView: View {
     @State private var selectedGame: PomeloGame?
     @Binding var urlgame: PomeloGame?
     @State var core: Core
+
+    @State private var showImporter = false
+    @State private var showImportMenu = false
+    @State private var showImportError = false
+    @State private var importErrorMessage = ""
 
     private var launchBinding: Binding<Bool> {
         Binding(
@@ -35,27 +42,40 @@ struct LibraryView: View {
                         .ignoresSafeArea()
 
                     VStack(spacing: 0) {
-                        MeloZuTopBar()
+                        MeloZuTopBar(
+                            showImportMenu: $showImportMenu
+                        )
 
-                        Spacer(minLength: 12)
+                        Spacer(minLength: 20)
 
-                        if core.games.isEmpty {
-                            EmptyLibraryView()
-                        } else {
-                            MeloZuGameShelf(
-                                games: core.games,
-                                selectedGame: $selectedGame
-                            ) { game in
-                                launch(game)
-                            }
+                        MeloZuGameLibrary(
+                            games: core.games,
+                            selectedGame: $selectedGame
+                        ) { game in
+                            launch(game)
                         }
 
-                        Spacer(minLength: 16)
+                        Spacer(minLength: 20)
 
-                        BottomMenuView(core: $core)
-                            .padding(.horizontal, 34)
-                            .padding(.bottom, 8)
+                        // Intentionally minimal for now.
+                        // More home controls can be added later.
+                        NavigationLink(destination: SettingsView(core: core)) {
+                            Circle()
+                                .fill(Color(uiColor: .darkGray))
+                                .frame(width: 58, height: 58)
+                                .overlay {
+                                    Image(systemName: "gearshape")
+                                        .font(.system(size: 27, weight: .medium))
+                                        .foregroundStyle(.white)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.bottom, 16)
                     }
+                    .frame(
+                        width: geometry.size.width,
+                        height: geometry.size.height
+                    )
 
                     NavigationLink(
                         destination: SudachiEmulationView(game: urlgame),
@@ -73,6 +93,28 @@ struct LibraryView: View {
         .onAppear {
             refreshLibrary()
         }
+        .fileImporter(
+            isPresented: $showImporter,
+            allowedContentTypes: [.zip, .item]
+        ) { result in
+            handleImportedURL(result)
+        }
+        .confirmationDialog(
+            "Import",
+            isPresented: $showImportMenu,
+            titleVisibility: .hidden
+        ) {
+            Button("Import Game / File") {
+                showImporter = true
+            }
+
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Import Failed", isPresented: $showImportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importErrorMessage)
+        }
     }
 
     private func launch(_ game: PomeloGame) {
@@ -87,58 +129,157 @@ struct LibraryView: View {
             if selectedGame == nil {
                 selectedGame = core.games.first
             } else if let selectedGame,
-                      !core.games.contains(where: { $0.programid == selectedGame.programid }) {
+                      !core.games.contains(where: {
+                          $0.programid == selectedGame.programid
+                      }) {
                 self.selectedGame = core.games.first
             }
         } catch {
             print("Failed to refresh MeloZu library: \(error)")
         }
     }
+
+    private func handleImportedURL(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            let hasAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if hasAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            let documents = FileManager.default.urls(
+                for: .documentDirectory,
+                in: .userDomainMask
+            )[0]
+
+            do {
+                if url.lastPathComponent.lowercased().hasSuffix(".zip") {
+                    core.AddFirmware(at: url)
+                }
+
+                if core.supportedFileTypes.contains(
+                    url.pathExtension.lowercased()
+                ) {
+                    let roms = documents.appendingPathComponent("roms")
+
+                    if !FileManager.default.fileExists(atPath: roms.path) {
+                        try FileManager.default.createDirectory(
+                            at: roms,
+                            withIntermediateDirectories: true
+                        )
+                    }
+
+                    let destination = roms.appendingPathComponent(
+                        url.lastPathComponent
+                    )
+
+                    if FileManager.default.fileExists(
+                        atPath: destination.path
+                    ) {
+                        try FileManager.default.removeItem(at: destination)
+                    }
+
+                    try FileManager.default.copyItem(
+                        at: url,
+                        to: destination
+                    )
+                }
+
+                if url.lastPathComponent.lowercased().hasSuffix(".keys") {
+                    let keys = documents.appendingPathComponent("keys")
+
+                    if !FileManager.default.fileExists(atPath: keys.path) {
+                        try FileManager.default.createDirectory(
+                            at: keys,
+                            withIntermediateDirectories: true
+                        )
+                    }
+
+                    let destination = keys.appendingPathComponent(
+                        url.lastPathComponent
+                    )
+
+                    if FileManager.default.fileExists(
+                        atPath: destination.path
+                    ) {
+                        try FileManager.default.removeItem(at: destination)
+                    }
+
+                    try FileManager.default.copyItem(
+                        at: url,
+                        to: destination
+                    )
+
+                    Sudachi.shared.refreshKeys()
+                }
+
+                refreshLibrary()
+            } catch {
+                importErrorMessage = error.localizedDescription
+                showImportError = true
+            }
+
+        case .failure(let error):
+            importErrorMessage = error.localizedDescription
+            showImportError = true
+        }
+    }
 }
 
 private struct MeloZuTopBar: View {
-    @State private var now = Date()
-    @State private var batteryLevel: Float = UIDevice.current.batteryLevel
+    @Binding var showImportMenu: Bool
 
-    private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    @State private var now = Date()
+
+    private let timer = Timer.publish(
+        every: 30,
+        on: .main,
+        in: .common
+    ).autoconnect()
 
     var body: some View {
         HStack {
             Image(systemName: "person.crop.circle.fill")
-                .font(.system(size: 44))
+                .font(.system(size: 46))
                 .symbolRenderingMode(.palette)
                 .foregroundStyle(.white, Color.blue)
                 .frame(width: 52, height: 52)
 
             Spacer()
 
-            Text(timeString(from: now))
-                .font(.system(size: 25, weight: .medium, design: .rounded))
-                .foregroundStyle(.white)
-                .monospacedDigit()
-
-            Spacer()
-
-            HStack(spacing: 15) {
+            HStack(spacing: 22) {
                 Image(systemName: "wifi")
-                    .font(.system(size: 25, weight: .medium))
+                    .font(.system(size: 24, weight: .medium))
                     .foregroundStyle(.white)
 
-                Image(systemName: batteryIcon(for: batteryLevel))
-                    .font(.system(size: 25, weight: .medium))
+                Text(timeString(from: now))
+                    .font(
+                        .system(
+                            size: 24,
+                            weight: .medium,
+                            design: .rounded
+                        )
+                    )
                     .foregroundStyle(.white)
+                    .monospacedDigit()
+
+                Button {
+                    showImportMenu = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 25, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.plain)
             }
-            .frame(width: 105, alignment: .trailing)
         }
         .padding(.horizontal, 30)
         .padding(.top, 12)
-        .onAppear {
-            UIDevice.current.isBatteryMonitoringEnabled = true
-            batteryLevel = UIDevice.current.batteryLevel
-        }
         .onReceive(timer) { _ in
             now = Date()
-            batteryLevel = UIDevice.current.batteryLevel
         }
     }
 
@@ -148,201 +289,143 @@ private struct MeloZuTopBar: View {
         formatter.dateFormat = "h:mm a"
         return formatter.string(from: date)
     }
-
-    private func batteryIcon(for level: Float) -> String {
-        switch level {
-        case ..<0:
-            return "battery.100"
-        case 0..<0.15:
-            return "battery.0"
-        case 0.15..<0.4:
-            return "battery.25"
-        case 0.4..<0.7:
-            return "battery.50"
-        case 0.7..<0.9:
-            return "battery.75"
-        default:
-            return "battery.100"
-        }
-    }
 }
 
-private struct EmptyLibraryView: View {
-    var body: some View {
-        VStack(spacing: 22) {
-            Spacer()
-
-            Text("?")
-                .font(.system(size: 280, weight: .regular, design: .rounded))
-                .foregroundStyle(.white)
-                .minimumScaleFactor(0.5)
-
-            Text("No Games")
-                .font(.system(size: 26, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.82))
-
-            Text("Tap + to import a game")
-                .font(.system(size: 17, weight: .regular, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
-
-            Spacer()
-        }
-    }
-}
-
-private struct MeloZuGameShelf: View {
+private struct MeloZuGameLibrary: View {
     let games: [PomeloGame]
     @Binding var selectedGame: PomeloGame?
     let launch: (PomeloGame) -> Void
 
+    private let slotSize: CGFloat = 158
+    private let cornerRadius: CGFloat = 24
+    private let placeholderCount = 6
+
+    private var slotGames: [PomeloGame?] {
+        let minimumCount = max(placeholderCount, games.count)
+
+        return (0..<minimumCount).map { index in
+            index < games.count ? games[index] : nil
+        }
+    }
+
     var body: some View {
-        VStack(spacing: 24) {
-            if let selectedGame {
-                GameHeroCard(game: selectedGame) {
-                    launch(selectedGame)
-                }
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 18) {
-                    ForEach(games, id: \.programid) { game in
-                        GameShelfTile(
-                            game: game,
-                            isSelected: selectedGame?.programid == game.programid
-                        ) {
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                selectedGame = game
-                            }
-                        }
-                        .contextMenu {
-                            Button {
-                                launch(game)
-                            } label: {
-                                Label("Launch", systemImage: "play.fill")
-                            }
-
-                            Button(role: .destructive) {
-                                do {
-                                    try LibraryManager.shared.removerom(game)
-                                } catch {
-                                    print("Failed to remove game: \(error)")
+        VStack(spacing: 18) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 20) {
+                        ForEach(slotGames.indices, id: \.self) { index in
+                            GameLibrarySlot(
+                                game: slotGames[index],
+                                isSelected: slotGames[index]?.programid == selectedGame?.programid,
+                                size: slotSize,
+                                cornerRadius: cornerRadius
+                            ) {
+                                guard let game = slotGames[index] else {
+                                    return
                                 }
-                            } label: {
-                                Label("Remove", systemImage: "trash")
+
+                                withAnimation(.easeOut(duration: 0.18)) {
+                                    selectedGame = game
+                                }
+
+                                proxy.scrollTo(index, anchor: .center)
+                            }
+                            .id(index)
+                            .contextMenu {
+                                if let game = slotGames[index] {
+                                    Button {
+                                        launch(game)
+                                    } label: {
+                                        Label(
+                                            "Launch",
+                                            systemImage: "play.fill"
+                                        )
+                                    }
+
+                                    Button(role: .destructive) {
+                                        do {
+                                            try LibraryManager.shared.removerom(game)
+                                        } catch {
+                                            print(
+                                                "Failed to remove game: \(error)"
+                                            )
+                                        }
+                                    } label: {
+                                        Label(
+                                            "Remove",
+                                            systemImage: "trash"
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                .padding(.horizontal, 32)
-                .padding(.vertical, 4)
-            }
-            .frame(maxHeight: 118)
-        }
-        .padding(.horizontal, 8)
-    }
-}
-
-private struct GameHeroCard: View {
-    let game: PomeloGame
-    let launch: () -> Void
-
-    var body: some View {
-        HStack(spacing: 28) {
-            Group {
-                if let image = UIImage(data: game.imageData) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 22)
-                            .fill(Color.white.opacity(0.08))
-                        Image(systemName: "gamecontroller.fill")
-                            .font(.system(size: 42))
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 8)
                 }
             }
-            .frame(width: 180, height: 180)
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-            .overlay(
-                RoundedRectangle(cornerRadius: 22)
-                    .stroke(.white.opacity(0.14), lineWidth: 1)
-            )
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text(game.title)
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
+            if let selectedGame {
+                Text(selectedGame.title)
+                    .font(
+                        .system(
+                            size: 20,
+                            weight: .semibold,
+                            design: .rounded
+                        )
+                    )
                     .foregroundStyle(.white)
-                    .lineLimit(2)
-
-                if !game.developer.isEmpty {
-                    Text(game.developer)
-                        .font(.system(size: 17, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
-                }
-
-                Button(action: launch) {
-                    Label("Play", systemImage: "play.fill")
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 11)
-                        .background(Capsule().fill(Color.white))
-                        .foregroundStyle(Color.black)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 5)
+                    .lineLimit(1)
             }
-
-            Spacer(minLength: 10)
         }
-        .padding(.horizontal, 36)
-        .frame(maxWidth: 950)
     }
 }
 
-private struct GameShelfTile: View {
-    let game: PomeloGame
+private struct GameLibrarySlot: View {
+    let game: PomeloGame?
     let isSelected: Bool
+    let size: CGFloat
+    let cornerRadius: CGFloat
     let select: () -> Void
 
     var body: some View {
         Button(action: select) {
-            VStack(spacing: 8) {
-                Group {
-                    if let image = UIImage(data: game.imageData) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(Color.white.opacity(0.08))
-                            Image(systemName: "questionmark")
-                                .font(.system(size: 24))
-                                .foregroundStyle(.white.opacity(0.5))
+            Group {
+                if let game,
+                   let image = UIImage(data: game.imageData) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(Color(uiColor: .darkGray))
+                        .overlay {
+                            Image(systemName: "plus")
+                                .font(.system(size: 28, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.24))
                         }
-                    }
                 }
-                .frame(width: 92, height: 92)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            isSelected ? Color.white : Color.white.opacity(0.10),
-                            lineWidth: isSelected ? 3 : 1
-                        )
-                )
-                .scaleEffect(isSelected ? 1.03 : 1.0)
-
-                Text(game.title)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(isSelected ? 1 : 0.55))
-                    .lineLimit(1)
-                    .frame(width: 110)
             }
+            .frame(width: size, height: size)
+            .clipShape(
+                RoundedRectangle(cornerRadius: cornerRadius)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(
+                        isSelected
+                            ? Color.white
+                            : Color.white.opacity(0.10),
+                        lineWidth: isSelected ? 4 : 1
+                    )
+            }
+            .scaleEffect(isSelected ? 1.05 : 1.0)
+            .animation(
+                .easeOut(duration: 0.18),
+                value: isSelected
+            )
         }
         .buttonStyle(.plain)
+        .disabled(game == nil)
     }
 }
