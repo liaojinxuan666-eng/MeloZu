@@ -63,7 +63,6 @@ jobs:
             binary-format=mach-o \
             target-os=iphone \
             address-model=64 \
-            instruction-set=arm64 \
             release \
             link=static \
             runtime-link=shared \
@@ -179,7 +178,7 @@ jobs:
           echo "✅ 缺失头文件准备完毕"
 
       # ============================================================
-      # Build
+      # Build Xcode
       # ============================================================
       - name: Build Xcode project
         run: |
@@ -226,7 +225,7 @@ jobs:
           rm -rf Payload
 
       # ============================================================
-      # Artifact
+      # Upload
       # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
