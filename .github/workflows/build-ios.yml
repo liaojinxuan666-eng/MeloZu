@@ -31,6 +31,14 @@ jobs:
           ls "$MVK_INC/MoltenVK" || exit 1
           ls "$VK_INC/vulkan" || exit 1
 
+          # 确保缺失的 vk_enum_string_helper.h 存在
+          if [ ! -f "$VK_INC/vulkan/vk_enum_string_helper.h" ]; then
+            echo "⚠️ 在 Homebrew vulkan-headers 中找不到 vk_enum_string_helper.h，正在下载..."
+            mkdir -p /tmp/vk_fix/vulkan
+            curl -L -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/main/include/vulkan/vk_enum_string_helper.h
+            echo "✅ 已下载到 /tmp/vk_fix"
+          fi
+
       - name: Build Xcode project
         run: |
           MVK_INC=$(brew --prefix molten-vk)/include
@@ -40,7 +48,7 @@ jobs:
                      -sdk iphoneos \
                      -configuration Release \
                      -derivedDataPath build \
-                     "HEADER_SEARCH_PATHS=\$(inherited) $MVK_INC $VK_INC" \
+                     "HEADER_SEARCH_PATHS=\$(inherited) $MVK_INC $VK_INC /tmp/vk_fix" \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
