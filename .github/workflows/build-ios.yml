@@ -21,23 +21,26 @@ jobs:
           mkdir -p Sudachi/Sudachi/Dependencies/boost
           cp -R /opt/homebrew/include/boost/* Sudachi/Sudachi/Dependencies/boost/
 
-      - name: Install MoltenVK via Homebrew
+      - name: Install MoltenVK and Vulkan Headers
         run: |
-          brew install molten-vk
+          brew install molten-vk vulkan-headers
           MVK_INC=$(brew --prefix molten-vk)/include
-          echo "✅ MoltenVK 头文件路径: $MVK_INC"
+          VK_INC=$(brew --prefix vulkan-headers)/include
+          echo "✅ MoltenVK include: $MVK_INC"
+          echo "✅ Vulkan  include: $VK_INC"
           ls "$MVK_INC/MoltenVK" || exit 1
+          ls "$VK_INC/vulkan" || exit 1
 
       - name: Build Xcode project
         run: |
           MVK_INC=$(brew --prefix molten-vk)/include
+          VK_INC=$(brew --prefix vulkan-headers)/include
           xcodebuild -project Pomelo.xcodeproj \
                      -scheme Pomelo \
                      -sdk iphoneos \
                      -configuration Release \
                      -derivedDataPath build \
-                     "HEADER_SEARCH_PATHS=\$(inherited) $MVK_INC" \
-                     "FRAMEWORK_SEARCH_PATHS=\$(inherited)" \
+                     "HEADER_SEARCH_PATHS=\$(inherited) $MVK_INC $VK_INC" \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
