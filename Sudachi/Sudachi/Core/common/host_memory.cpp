@@ -583,7 +583,7 @@ public:
 
     u8* backing_base{reinterpret_cast<u8*>(MAP_FAILED)};
     u8* virtual_base{reinterpret_cast<u8*>(MAP_FAILED)};
-    u8* virtual_map_base{reinterpret_cast_FAILED)};
+    u8* virtual_map_base{reinterpret_cast<u8*>(MAP_FAILED)};
 
 private:
     /// Release all resources in the object
