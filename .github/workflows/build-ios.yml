@@ -21,6 +21,27 @@ jobs:
           mkdir -p Sudachi/Sudachi/Dependencies/boost
           cp -R /opt/homebrew/include/boost/* Sudachi/Sudachi/Dependencies/boost/
 
+      - name: Prepare MoltenVK Include Path
+        run: |
+          # 1. 在 XCFramework 中找到真实的 mvk_vulkan.h 文件路径
+          MOLTENVK_HEADER_DIR=$(find Pomelo/Dependencies/XCFrameworks/MoltenVK.xcframework -name "mvk_vulkan.h" -exec dirname {} \; | head -n 1)
+          
+          if [ -z "$MOLTENVK_HEADER_DIR" ]; then
+            echo "❌ 在 MoltenVK.xcframework 中找不到 mvk_vulkan.h！"
+            exit 1
+          fi
+          
+          echo "✅ 找到真实的 MoltenVK 头文件目录: $MOLTENVK_HEADER_DIR"
+          
+          # 2. 创建一个伪装成 #include <MoltenVK/xxx.h> 结构的目录
+          mkdir -p /tmp/MoltenVK_Include/MoltenVK
+          
+          # 3. 把所有的头文件软链过去，这样编译器就能通过 <MoltenVK/mvk_vulkan.h> 找到
+          ln -s "$MOLTENVK_HEADER_DIR"/* /tmp/MoltenVK_Include/MoltenVK/ 2>/dev/null || true
+          
+          echo "✅ 临时 include 目录准备完毕"
+          ls -la /tmp/MoltenVK_Include/MoltenVK/ | head -n 5
+
       - name: Build Xcode project
         run: |
           xcodebuild -project Pomelo.xcodeproj \
@@ -28,8 +49,8 @@ jobs:
                      -sdk iphoneos \
                      -configuration Release \
                      -derivedDataPath build \
-                     HEADER_SEARCH_PATHS='$(inherited) $(BUILT_PRODUCTS_DIR)/MoltenVK.framework/Headers' \
-                     FRAMEWORK_SEARCH_PATHS='$(inherited) $(BUILT_PRODUCTS_DIR)' \
+                     HEADER_SEARCH_PATHS='$(inherited) /tmp/MoltenVK_Include' \
+                     FRAMEWORK_SEARCH_PATHS='$(inherited)' \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
@@ -38,7 +59,6 @@ jobs:
       - name: Package into .ipa
         run: |
           mkdir -p Payload
-          # 精准定位生成的 .app 文件，限制深度并只取第一个，防止匹配到多个导致 cp 报错
           APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
           
           if [ -z "$APP_PATH" ]; then
