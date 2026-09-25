@@ -2,7 +2,7 @@ name: Build iOS App
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
@@ -15,96 +15,219 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Boost via Homebrew
+      # ============================================================
+      # Boost
+      # ============================================================
+      - name: Install Boost and rebuild Boost.Context for iOS
         run: |
           brew install boost
+
           mkdir -p Sudachi/Sudachi/Dependencies/boost
           cp -R /opt/homebrew/include/boost/* Sudachi/Sudachi/Dependencies/boost/
 
+          echo "=== Download Boost 1.92.0 source ==="
+
+          rm -rf /tmp/boost_1_92_0
+          rm -f /tmp/boost_1_92_0.tar.gz
+
+          curl -fsSL \
+            https://archives.boost.io/release/1.92.0/source/boost_1_92_0.tar.gz \
+            -o /tmp/boost_1_92_0.tar.gz
+
+          tar -xzf /tmp/boost_1_92_0.tar.gz -C /tmp
+
+          cd /tmp/boost_1_92_0
+
+          ./bootstrap.sh
+
+          XCODE_ROOT=$(xcode-select -print-path)
+          IOSSYSROOT="$XCODE_ROOT/Platforms/iPhoneOS.platform/Developer"
+
+          cat > tools/build/src/user-config.jam <<EOF
+          using darwin : ios : clang++ -arch arm64 \
+            -isysroot $IOSSYSROOT/SDKs/iPhoneOS.sdk \
+            -mios-version-min=15.0 \
+            : <striper> <root>$IOSSYSROOT \
+            : <architecture>arm
+              <target-os>iphone
+          ;
+          EOF
+
+          echo "=== Build Boost.Context for iOS arm64 ==="
+
+          ./b2 -j8 \
+            --stagedir=stage/ios-arm64 \
+            toolset=darwin-ios \
+            architecture=arm \
+            abi=aapcs \
+            binary-format=mach-o \
+            target-os=iphone \
+            address-model=64 \
+            instruction-set=arm64 \
+            release \
+            link=static \
+            runtime-link=shared \
+            cxxflags="-std=c++20" \
+            --with-context
+
+          CONTEXT_LIB="/tmp/boost_1_92_0/stage/ios-arm64/lib/libboost_context.a"
+
+          echo "=== Verify Boost.Context symbols ==="
+
+          if [ ! -f "$CONTEXT_LIB" ]; then
+            echo "❌ Boost.Context archive was not produced"
+            exit 1
+          fi
+
+          nm -g "$CONTEXT_LIB" | grep -E "jump_fcontext|make_fcontext" || {
+            echo "❌ Boost.Context archive is missing fcontext symbols"
+            exit 1
+          }
+
+          echo "✅ Boost.Context symbols found"
+
+          echo "=== Replace bundled iOS Boost.Context ==="
+
+          rm -rf \
+            "$GITHUB_WORKSPACE/Pomelo/Dependencies/XCFrameworks/boost_context.xcframework"
+
+          xcodebuild -create-xcframework \
+            -library "$CONTEXT_LIB" \
+            -output \
+            "$GITHUB_WORKSPACE/Pomelo/Dependencies/XCFrameworks/boost_context.xcframework"
+
+          echo "✅ iOS Boost.Context rebuilt"
+
+      # ============================================================
+      # MoltenVK / Vulkan
+      # ============================================================
       - name: Install MoltenVK and Vulkan Headers
         run: |
           brew install molten-vk vulkan-headers
+
           MVK_INC=$(brew --prefix molten-vk)/include
           VK_INC=$(brew --prefix vulkan-headers)/include
+
           echo "✅ MoltenVK include: $MVK_INC"
-          echo "✅ Vulkan  include: $VK_INC"
+          echo "✅ Vulkan include: $VK_INC"
+
           ls "$MVK_INC/MoltenVK" || exit 1
           ls "$VK_INC/vulkan" || exit 1
 
+      # ============================================================
+      # Vulkan missing headers
+      # ============================================================
       - name: Download missing Vulkan helper headers
         run: |
           mkdir -p /tmp/vk_fix/vulkan
 
           VK_INC=$(brew --prefix vulkan-headers)/include
 
-          # 1. 读取 Homebrew vulkan-headers 的版本号，确保下载的 helper 与之匹配
-          VK_HEADER_VERSION=$(grep -m1 "^#define VK_HEADER_VERSION " "$VK_INC/vulkan/vulkan_core.h" | awk '{print $3}')
+          VK_HEADER_VERSION=$(grep -m1 "^#define VK_HEADER_VERSION " \
+            "$VK_INC/vulkan/vulkan_core.h" | awk '{print $3}')
+
           echo "✅ Homebrew vulkan-headers VK_HEADER_VERSION = $VK_HEADER_VERSION"
+
           if [ -z "$VK_HEADER_VERSION" ]; then
             echo "❌ 无法读取 VK_HEADER_VERSION"
             exit 1
           fi
 
-          # 2. 从 Vulkan-Utility-Libraries 下载对应 tag 的 vk_enum_string_helper.h
           TAG="vulkan-sdk-1.4.${VK_HEADER_VERSION}.0"
+
           URL="https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/${TAG}/include/vulkan/vk_enum_string_helper.h"
+
           echo "⬇️ 下载 $URL"
-          if ! curl -fsSL -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h "$URL"; then
+
+          if ! curl -fsSL \
+            -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h \
+            "$URL"; then
+
             echo "⚠️ tag 下载失败，回退到 main"
-            curl -fsSL -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h \
+
+            curl -fsSL \
+              -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h \
               https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/main/include/vulkan/vk_enum_string_helper.h
           fi
 
-          # 3. vk_mem_alloc.h 仍然从 VulkanMemoryAllocator 下载
           echo "⬇️ 下载 vk_mem_alloc.h"
-          curl -fsSL -o /tmp/vk_fix/vk_mem_alloc.h \
+
+          curl -fsSL \
+            -o /tmp/vk_fix/vk_mem_alloc.h \
             https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/master/include/vk_mem_alloc.h
 
-          # 校验
           echo "===== vk_enum_string_helper.h 前 3 行 ====="
           head -n 3 /tmp/vk_fix/vulkan/vk_enum_string_helper.h
+
           echo "===== vk_mem_alloc.h 前 3 行 ====="
           head -n 3 /tmp/vk_fix/vk_mem_alloc.h
 
-          if grep -q "404: Not Found" /tmp/vk_fix/vulkan/vk_enum_string_helper.h; then
+          if grep -q "404: Not Found" \
+            /tmp/vk_fix/vulkan/vk_enum_string_helper.h; then
+
             echo "❌ vk_enum_string_helper.h 下载失败"
             exit 1
           fi
-          if grep -q "404: Not Found" /tmp/vk_fix/vk_mem_alloc.h; then
+
+          if grep -q "404: Not Found" \
+            /tmp/vk_fix/vk_mem_alloc.h; then
+
             echo "❌ vk_mem_alloc.h 下载失败"
             exit 1
           fi
 
           echo "✅ 缺失头文件准备完毕"
 
+      # ============================================================
+      # Build
+      # ============================================================
       - name: Build Xcode project
         run: |
           MVK_INC=$(brew --prefix molten-vk)/include
           VK_INC=$(brew --prefix vulkan-headers)/include
-          xcodebuild -project Pomelo.xcodeproj \
-                     -scheme Pomelo \
-                     -sdk iphoneos \
-                     -configuration Release \
-                     -derivedDataPath build \
-                     "HEADER_SEARCH_PATHS=\$(inherited) $MVK_INC $VK_INC /tmp/vk_fix" \
-                     CODE_SIGNING_ALLOWED=NO \
-                     CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGN_IDENTITY="" \
-                     build
 
+          xcodebuild \
+            -project Pomelo.xcodeproj \
+            -scheme Pomelo \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            "HEADER_SEARCH_PATHS=\$(inherited) $MVK_INC $VK_INC /tmp/vk_fix" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      # ============================================================
+      # Package IPA
+      # ============================================================
       - name: Package into .ipa
         run: |
           mkdir -p Payload
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
+
+          APP_PATH=$(find \
+            build/Build/Products/Release-iphoneos \
+            -maxdepth 1 \
+            -name "*.app" \
+            -type d \
+            | head -n 1)
+
           if [ -z "$APP_PATH" ]; then
             echo "❌ 错误：找不到 .app 文件！"
             exit 1
           fi
+
           echo "✅ 找到应用包: $APP_PATH"
+
           cp -r "$APP_PATH" Payload/
+
           zip -r MeloZu.ipa Payload/
+
           rm -rf Payload
 
+      # ============================================================
+      # Artifact
+      # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
