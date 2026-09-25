@@ -35,12 +35,12 @@ jobs:
         run: |
           mkdir -p /tmp/vk_fix/vulkan
 
-          # 1. vk_enum_string_helper.h (来自 Vulkan-Headers 官方仓库)
+          # 1. vk_enum_string_helper.h (来自 Vulkan-Utility-Libraries 官方仓库)
           echo "⬇️ 下载 vk_enum_string_helper.h ..."
           curl -fsSL -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h \
-            https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/main/include/vulkan/vk_enum_string_helper.h
+            https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/main/include/vulkan/vk_enum_string_helper.h
 
-          # 2. vk_mem_alloc.h (来自 VulkanMemoryAllocator 官方仓库)
+          # 2. vk_mem_alloc.h (来自 GPUOpen VulkanMemoryAllocator 官方仓库)
           echo "⬇️ 下载 vk_mem_alloc.h ..."
           curl -fsSL -o /tmp/vk_fix/vk_mem_alloc.h \
             https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/master/include/vk_mem_alloc.h
@@ -51,7 +51,6 @@ jobs:
           echo "===== /tmp/vk_fix/vk_mem_alloc.h 前 3 行 ====="
           head -n 3 /tmp/vk_fix/vk_mem_alloc.h
 
-          # 如果下载的是 404 页面，主动报错
           if grep -q "404: Not Found" /tmp/vk_fix/vulkan/vk_enum_string_helper.h; then
             echo "❌ vk_enum_string_helper.h 下载失败（404）"
             exit 1
