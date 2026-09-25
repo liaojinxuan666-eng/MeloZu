@@ -6,7 +6,16 @@
 #include <thread>
 
 #include <boost/asio.hpp>
-#include <boost/process/async.hpp>
+#include <boost/version.hpp>
+
+#if BOOST_VERSION > 108300 && !defined(_WINDOWS) && !defined(ANDROID)
+#include <boost/process/v1/async_pipe.hpp>
+#else
+#include <boost/process/async_pipe.hpp>
+namespace boost::process::v1 {
+using async_pipe = ::boost::process::async_pipe;
+}
+#endif
 
 #include "common/logging/log.h"
 #include "common/polyfill_thread.h"
