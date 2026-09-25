@@ -6,7 +6,7 @@
 #include <thread>
 
 #include <boost/asio.hpp>
-#include <boost/process/async_pipe.hpp>
+#include <boost/process/async.hpp>
 
 #include "common/logging/log.h"
 #include "common/polyfill_thread.h"
