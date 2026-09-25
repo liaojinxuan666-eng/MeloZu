@@ -35,28 +35,43 @@ jobs:
         run: |
           mkdir -p /tmp/vk_fix/vulkan
 
-          # 1. vk_enum_string_helper.h (来自 Vulkan-Utility-Libraries 官方仓库)
-          echo "⬇️ 下载 vk_enum_string_helper.h ..."
-          curl -fsSL -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h \
-            https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/main/include/vulkan/vk_enum_string_helper.h
+          VK_INC=$(brew --prefix vulkan-headers)/include
 
-          # 2. vk_mem_alloc.h (来自 GPUOpen VulkanMemoryAllocator 官方仓库)
-          echo "⬇️ 下载 vk_mem_alloc.h ..."
+          # 1. 读取 Homebrew vulkan-headers 的版本号，确保下载的 helper 与之匹配
+          VK_HEADER_VERSION=$(grep -m1 "^#define VK_HEADER_VERSION " "$VK_INC/vulkan/vulkan_core.h" | awk '{print $3}')
+          echo "✅ Homebrew vulkan-headers VK_HEADER_VERSION = $VK_HEADER_VERSION"
+          if [ -z "$VK_HEADER_VERSION" ]; then
+            echo "❌ 无法读取 VK_HEADER_VERSION"
+            exit 1
+          fi
+
+          # 2. 从 Vulkan-Utility-Libraries 下载对应 tag 的 vk_enum_string_helper.h
+          TAG="vulkan-sdk-1.3.${VK_HEADER_VERSION}.0"
+          URL="https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/${TAG}/include/vulkan/vk_enum_string_helper.h"
+          echo "⬇️ 下载 $URL"
+          if ! curl -fsSL -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h "$URL"; then
+            echo "⚠️ tag 下载失败，回退到 main"
+            curl -fsSL -o /tmp/vk_fix/vulkan/vk_enum_string_helper.h \
+              https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/main/include/vulkan/vk_enum_string_helper.h
+          fi
+
+          # 3. vk_mem_alloc.h 仍然从 VulkanMemoryAllocator 下载
+          echo "⬇️ 下载 vk_mem_alloc.h"
           curl -fsSL -o /tmp/vk_fix/vk_mem_alloc.h \
             https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/master/include/vk_mem_alloc.h
 
-          # 校验下载内容
-          echo "===== /tmp/vk_fix/vulkan/vk_enum_string_helper.h 前 3 行 ====="
+          # 校验
+          echo "===== vk_enum_string_helper.h 前 3 行 ====="
           head -n 3 /tmp/vk_fix/vulkan/vk_enum_string_helper.h
-          echo "===== /tmp/vk_fix/vk_mem_alloc.h 前 3 行 ====="
+          echo "===== vk_mem_alloc.h 前 3 行 ====="
           head -n 3 /tmp/vk_fix/vk_mem_alloc.h
 
           if grep -q "404: Not Found" /tmp/vk_fix/vulkan/vk_enum_string_helper.h; then
-            echo "❌ vk_enum_string_helper.h 下载失败（404）"
+            echo "❌ vk_enum_string_helper.h 下载失败"
             exit 1
           fi
           if grep -q "404: Not Found" /tmp/vk_fix/vk_mem_alloc.h; then
-            echo "❌ vk_mem_alloc.h 下载失败（404）"
+            echo "❌ vk_mem_alloc.h 下载失败"
             exit 1
           fi
 
@@ -81,12 +96,10 @@ jobs:
         run: |
           mkdir -p Payload
           APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
-          
           if [ -z "$APP_PATH" ]; then
-            echo "❌ 错误：在 build/Build/Products/Release-iphoneos 下找不到 .app 文件！"
+            echo "❌ 错误：找不到 .app 文件！"
             exit 1
           fi
-          
           echo "✅ 找到应用包: $APP_PATH"
           cp -r "$APP_PATH" Payload/
           zip -r MeloZu.ipa Payload/
