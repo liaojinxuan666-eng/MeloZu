@@ -12,7 +12,6 @@ struct ContentView: View {
 
     var body: some View {
         BootOSView()
-            .persistentSystemOverlays(.hidden)
             .sheet(
                 isPresented: Binding(
                     get: { !dismissedDisclaimer },
