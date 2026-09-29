@@ -2,12 +2,12 @@
 //  BootOSView.swift
 //  MeloZu
 //
-//  v4 修复要点：
-//  1. 【核心】彻底解决导入残缺固件后卡 Loading 死循环的问题。
-//     在 UI 层强制执行物理文件校验（检查 qlaunch 和 prod.keys），
-//     只要缺少，强制阻断 bootSystem，绝对不进入 SudachiEmulationView。
-//  2. 完善报错引导，明确指出市面固件包缺失 qlaunch (0100000000001000) 的问题。
-//  3. 新增“清除固件”按钮，方便用户重置错误的固件导入。
+//  v5 修复要点：
+//  1. 【致命Bug修复】移除通过文件名前缀(0100000000001000)查找 qlaunch 的错误逻辑。
+//     官方固件的 NCA 文件名为哈希值（如 fe9bef...nca），不会以 Title ID 开头。
+//  2. 【防卡死】改为基于 NCA 文件数量（完整固件通常 >100 个）和 prod.keys 进行 UI 层预校验。
+//     只要文件不满足条件，强制阻断 bootSystem，绝对不进入 SudachiEmulationView。
+//  3. 完善市面残缺固件的报错引导，新增“清除固件”按钮。
 //
 
 import SwiftUI
@@ -179,7 +179,7 @@ struct BootOSView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             
                             if !isFirmwareReady {
-                                Text("⚠️ Firmware incomplete. Please import a full Switch firmware dump containing qlaunch (0100000000001000).")
+                                Text("⚠️ Firmware incomplete or missing files. Please import a full Switch firmware dump.")
                                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                                     .foregroundStyle(.orange)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -408,6 +408,7 @@ struct BootOSView: View {
                 self.showError = true
                 // 【关键修复】：发生错误时，强制重置 boot 状态，防止卡死
                 self.bootSystem = false
+                self.isFirmwareReady = false
             }
         }
 
@@ -468,14 +469,15 @@ struct BootOSView: View {
         }
 
         let zipAttributes = try? fm.attributesOfItem(atPath: zipToUse.path)
-        let zipSize = (zipAttributes?[.size] as? NSNumber)?.int64Value ?? 0
+        let zipSize = (zipCountAttributes?[.size] as? NSNumber)?.int64Value ?? 0
 
         guard zipSize > 0 else {
-            fail("The ZIP is 0 bytes and could not be read:\n\(zipToUse.path)")
+            fail("The ZIP is 0 bytes and could not be read:\n\(zipToUse)\.path)")
             return
         }
 
-        let zipSizeText = ByteCountFormatter.string(fromByteCount: zipSize, countStyle: .file)
+        letn zipSizeText = Byte"
+CountFormatter.string(fromByteCount       : zipSize, count reportStyle: .file)
         setStatus("Extracting \(zipSizeText) ZIP… this may take a minute.")
 
         let registered = documents.appendingPathComponent(
@@ -521,7 +523,6 @@ struct BootOSView: View {
         flattenIfNested(registered)
 
         var ncaCount = 0
-        var qlaunchFound = false
         var totalBytes: UInt64 = 0
         var sampleNames: [String] = []
 
@@ -543,10 +544,6 @@ struct BootOSView: View {
                 if sampleNames.count < 3 {
                     sampleNames.append(name)
                 }
-
-                if lower.hasPrefix("0100000000001000") {
-                    qlaunchFound = true
-                }
             }
         }
 
@@ -566,9 +563,7 @@ struct BootOSView: View {
         var report = ""
         report += "ZIP size: \(zipText)\n"
         report += "Extracted: \(extractedText)\n"
-        report += "NCAs in registered/: \(ncaCount)\n"
-        report += "qlaunch 0100000000001000: \(qlaunchFound ? "FOUND" : "MISSING")\n"
-        report += "prod.keys: \(prodKeysOK ? "present" : "MISSING")\n"
+        report += "NCAs in registered/: \(nca += "prod.keys: \(prodKeysOK ? "present" : "MISSING")\n"
         report += "title.keys: \(titleKeysOK ? "present" : "MISSING")\n"
         if !sampleNames.isEmpty {
             report += "Sample: \(sampleNames.joined(separator: ", "))"
@@ -583,18 +578,16 @@ struct BootOSView: View {
 
             The ZIP probably does not contain Switch firmware NCAs directly.
             """
-        } else if !qlaunchFound {
+        } else if ncaCount < 100 {
             problem = """
-            Extracted \(ncaCount) .nca files, but the qlaunch system NCA \
-            (0100000000001000) is missing.
+            Extracted only \(ncaCount) .nca files. This is far too few for a complete Switch system firmware.
 
             【重要提示】市面上的很多固件包是残缺的（例如只有游戏或更新包）。
-            MeloZu 引导进入原生 Switch 桌面，必须要求完整的系统固件，
-            请确保你的固件包包含 qlaunch (0100000000001000)。
+            完整固件通常包含 100 个以上的 NCA 文件。请确保你的固件包是完整系统固件 dump。
             """
         } else if !prodKeysOK {
             problem = """
-            Firmware looks good (\(ncaCount) NCAs, qlaunch found).
+            Firmware looks structurally complete (\(ncaCount) NCAs found).
 
             But prod.keys is MISSING in the keys/ folder — the Switch OS \
             cannot boot without it. Put prod.keys into:
@@ -681,18 +674,21 @@ struct BootOSView: View {
 
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         
-        // 1. 独立物理文件校验
-        let qlaunchPath = documents.appendingPathComponent(
-            "nand/system/Contents/registered/0100000000001000.nca"
-        )
+        // 1. 独立物理文件校验（基于 NCA 数量和 keys）
         let prodKeysPath = documents.appendingPathComponent("keys/prod.keys")
-        
-        let qlaunchExists = FileManager.default.fileExists(atPath: qlaunchPath.path)
         let prodKeysExists = FileManager.default.fileExists(atPath: prodKeysPath.path)
 
-        // 2. 只有物理文件齐全，且底层核心认可时，才允许启动
+        let registered = documents.appendingPathComponent("nand/system/Contents/registered")
+        var ncaCount = 0
+        if let enumerator = FileManager.default.enumerator(at: registered, includingPropertiesForKeys: nil) {
+            for case let file as URL in enumerator {
+                if file.pathExtension.lowercased() == "nca" { ncaCount += 1 }
+            }
+        }
+        
+        // 2. 只有 keys 存在，且 NCA 数量正常（>100），且底层核心认可时，才允许启动
         let coreCanBoot = Sudachi.shared.canGetFullPath() || canGetFullPath
-        let canBoot = qlaunchExists && prodKeysExists && coreCanBoot
+        let canBoot = prodKeysExists && ncaCount > 100 && coreCanBoot
         
         isFirmwareReady = canBoot
         bootSystem = canBoot
@@ -700,7 +696,7 @@ struct BootOSView: View {
         if canBoot {
             print("[MeloZu] Firmware check passed. Booting system...")
         } else {
-            print("[MeloZu] Firmware check failed. qlaunch: \(qlaunchExists), prodKeys: \(prodKeysExists), core: \(coreCanBoot)")
+            print("[MeloZu] Firmware check failed. prodKeys: \(prodKeysExists), ncaCount: \(ncaCount), core: \(coreCanBoot)")
         }
     }
 
