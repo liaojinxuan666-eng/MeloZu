@@ -7,7 +7,7 @@
 //     官方固件的 NCA 文件名为哈希值（如 fe9bef...nca），不会以 Title ID 开头。
 //  2. 【防卡死】改为基于 NCA 文件数量（完整固件通常 >100 个）和 prod.keys 进行 UI 层预校验。
 //     只要文件不满足条件，强制阻断 bootSystem，绝对不进入 SudachiEmulationView。
-//  3. 完善市面残缺固件的报错引导，新增“清除固件”按钮。
+//  3. 完善市面残缺固件的报错引导，新增"清除固件"按钮。
 //
 
 import SwiftUI
@@ -348,7 +348,7 @@ struct BootOSView: View {
         Put your Switch firmware .zip in this folder, then open MeloZu
         and tap the refresh button in the "Firmware in app folder" section.
 
-        Do NOT put the .zip inside nand/ — MeloZu extracts it there itself.
+        Do NOT put the .zip inside nand/ -- MeloZu extracts it there itself.
 
         Sandbox path:
         \(sandboxPath)
@@ -469,15 +469,14 @@ struct BootOSView: View {
         }
 
         let zipAttributes = try? fm.attributesOfItem(atPath: zipToUse.path)
-        let zipSize = (zipCountAttributes?[.size] as? NSNumber)?.int64Value ?? 0
+        let zipSize = (zipAttributes?[.size] as? NSNumber)?.int64Value ?? 0
 
         guard zipSize > 0 else {
-            fail("The ZIP is 0 bytes and could not be read:\n\(zipToUse)\.path)")
+            fail("The ZIP is 0 bytes and could not be read:\n\(zipToUse.path)")
             return
         }
 
-        letn zipSizeText = Byte"
-CountFormatter.string(fromByteCount       : zipSize, count reportStyle: .file)
+        let zipSizeText = ByteCountFormatter.string(fromByteCount: zipSize, countStyle: .file)
         setStatus("Extracting \(zipSizeText) ZIP… this may take a minute.")
 
         let registered = documents.appendingPathComponent(
@@ -563,7 +562,8 @@ CountFormatter.string(fromByteCount       : zipSize, count reportStyle: .file)
         var report = ""
         report += "ZIP size: \(zipText)\n"
         report += "Extracted: \(extractedText)\n"
-        report += "NCAs in registered/: \(nca += "prod.keys: \(prodKeysOK ? "present" : "MISSING")\n"
+        report += "NCAs in registered/: \(ncaCount)\n"
+        report += "prod.keys: \(prodKeysOK ? "present" : "MISSING")\n"
         report += "title.keys: \(titleKeysOK ? "present" : "MISSING")\n"
         if !sampleNames.isEmpty {
             report += "Sample: \(sampleNames.joined(separator: ", "))"
@@ -589,7 +589,7 @@ CountFormatter.string(fromByteCount       : zipSize, count reportStyle: .file)
             problem = """
             Firmware looks structurally complete (\(ncaCount) NCAs found).
 
-            But prod.keys is MISSING in the keys/ folder — the Switch OS \
+            But prod.keys is MISSING in the keys/ folder -- the Switch OS \
             cannot boot without it. Put prod.keys into:
             On My iPhone/MeloZu/keys/
             """
