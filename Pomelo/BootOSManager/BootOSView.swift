@@ -2,15 +2,12 @@
 //  BootOSView.swift
 //  MeloZu
 //
-//  v3 修复要点：
-//  1. 【核心】新增「从 App 沙盒直接导入」——App 开了 UIFileSharingEnabled，
-//     用户只要把固件 zip 放进「文件」App → 我的 iPhone → MeloZu，
-//     App 就能自己扫描出来，点一下就导入。完全绕开系统文件选择器。
-//  2. 文件选择器改为手写 UIDocumentPickerViewController 桥接，
-//     并使用 asCopy: true —— iOS 会把文件复制进 App 自己的临时目录，
-//     不存在安全作用域 / 文件提供者读取失败的问题。
-//  3. 解压仍在后台线程，错误原文直接弹窗显示。
-//  4. 解压后扫描目录，报告 NCA 数量 / qlaunch / prod.keys。
+//  v4 修复要点：
+//  1. 【核心】彻底解决导入残缺固件后卡 Loading 死循环的问题。
+//     在 UI 层强制执行物理文件校验（检查 qlaunch 和 prod.keys），
+//     只要缺少，强制阻断 bootSystem，绝对不进入 SudachiEmulationView。
+//  2. 完善报错引导，明确指出市面固件包缺失 qlaunch (0100000000001000) 的问题。
+//  3. 新增“清除固件”按钮，方便用户重置错误的固件导入。
 //
 
 import SwiftUI
@@ -24,11 +21,13 @@ struct BootOSView: View {
     @State private var bootSystem = false
     @State private var showPicker = false
     @State private var showError = false
+    @State private var showResetConfirm = false
     @State private var errorMessage = ""
     @State private var isImporting = false
     @State private var statusText = ""
     @State private var diagReport = ""
     @State private var localZips: [URL] = []
+    @State private var isFirmwareReady = false
 
     @AppStorage("cangetfullpath") private var canGetFullPath = false
 
@@ -55,10 +54,18 @@ struct BootOSView: View {
                 }
             )
         }
-        .alert("Firmware", isPresented: $showError) {
+        .alert("Firmware Import Failed", isPresented: $showError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage)
+        }
+        .alert("Reset Firmware", isPresented: $showResetConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                resetFirmware()
+            }
+        } message: {
+            Text("This will delete all imported firmware and keys. Are you sure?")
         }
     }
 
@@ -92,6 +99,19 @@ struct BootOSView: View {
                             .foregroundStyle(.white)
 
                         Spacer()
+
+                        if isFirmwareReady {
+                            Button {
+                                showResetConfirm = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.red.opacity(0.8))
+                                    .padding(8)
+                                    .background(.white.opacity(0.1), in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
 
                     Spacer(minLength: 28)
@@ -151,18 +171,27 @@ struct BootOSView: View {
                     }
 
                     if !diagReport.isEmpty {
-                        Text(diagReport)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                .white.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 10)
-                            )
-                            .padding(.top, 14)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(diagReport)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.55))
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                            
+                            if !isFirmwareReady {
+                                Text("⚠️ Firmware incomplete. Please import a full Switch firmware dump containing qlaunch (0100000000001000).")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            .white.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 10)
+                        )
+                        .padding(.top, 14)
                     }
 
                     Spacer(minLength: 30)
@@ -269,7 +298,6 @@ struct BootOSView: View {
             }
         }
 
-        // 去掉重复（incoming 里可能有上次导入的副本）
         var seen = Set<String>()
         localZips = found.filter { url in
             let name = url.lastPathComponent
@@ -286,7 +314,6 @@ struct BootOSView: View {
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
-    /// App 沙盒 Documents 的真实路径（显示出来方便用户确认）
     private var sandboxPath: String {
         FileManager.default.urls(
             for: .documentDirectory,
@@ -294,7 +321,6 @@ struct BootOSView: View {
         )[0].path
     }
 
-    /// 该 App 在「文件」App 里「我的 iPhone」下显示的文件夹名
     private var appFolderName: String {
         if let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
            !name.isEmpty {
@@ -307,7 +333,6 @@ struct BootOSView: View {
         return "MeloZu"
     }
 
-    /// 在沙盒里放一个标记文件，方便用户在「文件」App 里认出这个目录
     private func writeMarkerFileIfNeeded() {
         let fm = FileManager.default
         let marker = FileManager.default.urls(
@@ -381,6 +406,8 @@ struct BootOSView: View {
                 }
                 self.errorMessage = message
                 self.showError = true
+                // 【关键修复】：发生错误时，强制重置 boot 状态，防止卡死
+                self.bootSystem = false
             }
         }
 
@@ -393,7 +420,6 @@ struct BootOSView: View {
             }
         }
 
-        // 把 zip 统一拷到 incoming/firmware.zip，避免后续路径/权限问题
         let incoming = documents.appendingPathComponent("incoming", isDirectory: true)
         do {
             try fm.createDirectory(at: incoming, withIntermediateDirectories: true)
@@ -407,7 +433,6 @@ struct BootOSView: View {
             try? fm.removeItem(at: localZip)
         }
 
-        // 如果源文件本来就在沙盒里（用户放进 Documents 的情况），直接解压它
         let sourceIsInsideSandbox = source.path.hasPrefix(documents.path)
 
         var zipToUse = source
@@ -465,7 +490,6 @@ struct BootOSView: View {
             return
         }
 
-        // 直接调用 Zip，把原始错误暴露出来（Core.AddFirmware 会吞掉错误）
         do {
             try Zip.unzipFile(
                 zipToUse,
@@ -564,7 +588,9 @@ struct BootOSView: View {
             Extracted \(ncaCount) .nca files, but the qlaunch system NCA \
             (0100000000001000) is missing.
 
-            This ZIP does not look like a complete Switch firmware dump.
+            【重要提示】市面上的很多固件包是残缺的（例如只有游戏或更新包）。
+            MeloZu 引导进入原生 Switch 桌面，必须要求完整的系统固件，
+            请确保你的固件包包含 qlaunch (0100000000001000)。
             """
         } else if !prodKeysOK {
             problem = """
@@ -581,7 +607,14 @@ struct BootOSView: View {
             self.statusText = ""
             self.diagReport = report
 
-            self.refreshBootState()
+            // 【核心修复】：先强制阻断，再尝试刷新状态
+            if problem != nil {
+                self.bootSystem = false
+                self.isFirmwareReady = false
+            } else {
+                self.refreshBootState()
+            }
+
             let canBoot = self.bootSystem
 
             if let problem = problem {
@@ -599,7 +632,6 @@ struct BootOSView: View {
         }
     }
 
-    /// 如果 registered/ 下只有唯一一个子文件夹，把它的内容提到上层
     private func flattenIfNested(_ registered: URL) {
         let fm = FileManager.default
 
@@ -647,16 +679,60 @@ struct BootOSView: View {
             return
         }
 
-        let canBoot = Sudachi.shared.canGetFullPath() || canGetFullPath
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        
+        // 1. 独立物理文件校验
+        let qlaunchPath = documents.appendingPathComponent(
+            "nand/system/Contents/registered/0100000000001000.nca"
+        )
+        let prodKeysPath = documents.appendingPathComponent("keys/prod.keys")
+        
+        let qlaunchExists = FileManager.default.fileExists(atPath: qlaunchPath.path)
+        let prodKeysExists = FileManager.default.fileExists(atPath: prodKeysPath.path)
+
+        // 2. 只有物理文件齐全，且底层核心认可时，才允许启动
+        let coreCanBoot = Sudachi.shared.canGetFullPath() || canGetFullPath
+        let canBoot = qlaunchExists && prodKeysExists && coreCanBoot
+        
+        isFirmwareReady = canBoot
         bootSystem = canBoot
+        
+        if canBoot {
+            print("[MeloZu] Firmware check passed. Booting system...")
+        } else {
+            print("[MeloZu] Firmware check failed. qlaunch: \(qlaunchExists), prodKeys: \(prodKeysExists), core: \(coreCanBoot)")
+        }
+    }
+
+    // MARK: - Reset Firmware
+
+    private func resetFirmware() {
+        let fm = FileManager.default
+        let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        
+        let pathsToRemove = [
+            documents.appendingPathComponent("nand", isDirectory: true),
+            documents.appendingPathComponent("keys", isDirectory: true),
+            documents.appendingPathComponent("incoming", isDirectory: true)
+        ]
+        
+        for path in pathsToRemove {
+            if fm.fileExists(atPath: path.path) {
+                try? fm.removeItem(at: path)
+            }
+        }
+        
+        DispatchQueue.main.async {
+            self.diagReport = ""
+            self.isFirmwareReady = false
+            self.bootSystem = false
+            self.scanLocalFirmware()
+        }
     }
 }
 
 // MARK: - Manual document picker
 
-/// 手写 UIDocumentPickerViewController 桥接。
-/// asCopy: true 让 iOS 把选中的文件复制到 App 自己的临时目录，
-/// 返回的 URL 可被 App 直接读取，不存在安全作用域 / 文件提供者问题。
 struct DocumentPicker: UIViewControllerRepresentable {
     let onPick: (URL) -> Void
     let onCancel: () -> Void
